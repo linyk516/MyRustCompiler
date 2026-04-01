@@ -1,6 +1,6 @@
 use crate::parser::grammar::Grammar;
 use crate::parser::production::ProductionId;
-use crate::parser::symbol::{NonTerminalId, Symbol, TerminalId};
+use crate::parser::symbol::{Symbol, TerminalId};
 
 /// 指示产生式和点号位置
 ///
@@ -8,7 +8,7 @@ use crate::parser::symbol::{NonTerminalId, Symbol, TerminalId};
 /// - 如果点号在a前面，那么dot=0
 /// - 如果点号在b前面，那么dot=1
 /// - ...
-#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ItemCore {
     pub production: ProductionId,
     pub dot: usize,
@@ -23,7 +23,7 @@ impl ItemCore {
 /// Lr1项目
 ///
 /// 即表示形如 [A→alpha·beta, a] 的项目，其中A是一个非终结符，alpha和beta是符号序列，a是一个终结符
-#[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone)]
+#[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Hash)]
 pub struct Lr1Item {
     pub core: ItemCore,
     pub lookahead: TerminalId,

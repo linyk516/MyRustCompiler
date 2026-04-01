@@ -1,11 +1,15 @@
 use std::collections::BTreeSet;
+use crate::parser::grammar::Grammar;
 use crate::parser::item::Lr1Item;
+use crate::parser::symbol::Symbol;
 
 /// 状态ID
+#[derive(Ord, Eq, PartialEq, PartialOrd, Clone, Debug)]
 pub struct StateID(pub usize);
 
 /// 活前缀识别DFA的一个状态，包含了一个LR(1)项目集合
 #[derive(Debug, Clone)]
+#[derive(Eq, Hash, PartialEq)]
 pub struct ItemSet {
     pub items: BTreeSet<Lr1Item>,
 }
@@ -33,5 +37,17 @@ impl ItemSet {
     
     pub fn iter(&self) -> impl Iterator<Item=&Lr1Item> {
         self.items.iter()
+    }
+
+    /// 获取当前所有在点后的符号，方便生成goto
+    pub fn next_symbols(&self, grammar: &Grammar) -> Vec<Symbol> {
+        let mut symbols = Vec::new();
+        for item in self.iter() {
+            match item.next_symbol(grammar) {
+                Some(sym) => symbols.push(sym),
+                None => continue,
+            }
+        }
+        symbols
     }
 }
