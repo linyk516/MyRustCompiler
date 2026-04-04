@@ -49,7 +49,7 @@ impl Lexer<'_> {
                 })
         } else {
             Token{
-                kind: TokenKind::Error,
+                kind: TokenKind::Eof,
                 span: Span { start: self.cursor.pos(), end: self.cursor.pos() },
             }
         }
@@ -191,5 +191,16 @@ impl Lexer<'_> {
                 None
             }
         })
+    }
+}
+
+impl Iterator for Lexer<'_> {
+    type Item = Token;
+    fn next(&mut self) -> Option<Self::Item> {
+        let token = self.next_token();
+        match token.kind {
+            TokenKind::Eof => None,
+            _ => Some(token)
+        }
     }
 }

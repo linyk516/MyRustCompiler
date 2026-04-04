@@ -4,8 +4,12 @@ pub(crate) mod grammar;
 pub(crate) mod item;
 pub(crate) mod first;
 pub(crate) mod state;
-pub(crate) mod automation;
+pub(crate) mod automaton;
 pub(crate) mod table;
-mod engine;
-mod error;
+pub(crate) mod engine;
+pub(crate) mod error;
 mod fmt;
+
+pub struct ParseResult {
+    
+}

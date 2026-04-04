@@ -1,14 +1,14 @@
-use std::fmt::Display;
+use serde::{Deserialize, Serialize};
 use crate::parser::symbol::{NonTerminalId, Symbol};
 
 
 /// 产生式ID
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ProductionId(pub usize);
 
 /// 产生式
 /// 由一个非终结符（lhs）和一个符号序列（rhs）组成
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Production {
     pub id: ProductionId,
     pub lhs: NonTerminalId,

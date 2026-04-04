@@ -692,12 +692,12 @@ mod lexer_next_token_tests {
     use super::super::Lexer;
 
     #[test]
-    fn next_token_returns_error_on_empty_input() {
+    fn next_token_returns_eof_on_empty_input() {
         let mut lexer = Lexer::new("");
 
         let token = lexer.next_token();
 
-        assert!(matches!(token.kind, TokenKind::Error));
+        assert!(matches!(token.kind, TokenKind::Eof));
         assert_eq!(token.span.start, 0);
         assert_eq!(token.span.end, 0);
     }
@@ -714,12 +714,12 @@ mod lexer_next_token_tests {
     }
 
     #[test]
-    fn next_token_returns_error_after_only_whitespace() {
+    fn next_token_returns_eof_after_only_whitespace() {
         let mut lexer = Lexer::new(" \n\t  ");
 
         let token = lexer.next_token();
 
-        assert!(matches!(token.kind, TokenKind::Error));
+        assert!(matches!(token.kind, TokenKind::Eof));
         assert_eq!(token.span.start, 5);
         assert_eq!(token.span.end, 5);
     }
@@ -823,9 +823,9 @@ mod lexer_next_token_tests {
         let mut kinds = Vec::new();
         for _ in 0..32 {
             let token = lexer.next_token();
-            let is_error = matches!(token.kind, TokenKind::Error);
+            let done = matches!(token.kind, TokenKind::Error | TokenKind::Eof);
             kinds.push(token.kind);
-            if is_error {
+            if done {
                 break;
             }
         }
@@ -853,7 +853,7 @@ mod lexer_next_token_tests {
         assert!(matches!(kinds[20], TokenKind::Separator(_)));
         assert!(matches!(kinds[21], TokenKind::Delimiter(_)));
         assert!(matches!(kinds[22], TokenKind::Delimiter(_)));
-        assert!(matches!(kinds[23], TokenKind::Error));
+        assert!(matches!(kinds[23], TokenKind::Eof));
     }
 }
 

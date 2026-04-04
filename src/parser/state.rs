@@ -1,10 +1,11 @@
 use std::collections::BTreeSet;
+use serde::{Deserialize, Serialize};
 use crate::parser::grammar::Grammar;
 use crate::parser::item::Lr1Item;
 use crate::parser::symbol::Symbol;
 
 /// 状态ID
-#[derive(Ord, Eq, PartialEq, PartialOrd, Clone, Debug)]
+#[derive(Ord, Eq, PartialEq, PartialOrd, Clone, Debug, Serialize, Deserialize)]
 pub struct StateID(pub usize);
 
 /// 活前缀识别DFA的一个状态，包含了一个LR(1)项目集合

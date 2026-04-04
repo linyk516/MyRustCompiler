@@ -1,26 +1,28 @@
+use serde::{Deserialize, Serialize};
+
 /// 终结符
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Terminal {
     pub name: String,
 }
 
 /// 非终结符
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NonTerminal {
     pub name: String,
 }
 
 /// 终结符ID
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TerminalId(pub usize);
 
 /// 非终结符ID
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct  NonTerminalId(pub usize);
 
 /// 一般文法符号
 /// 分为终结符和非终结符，并保存相应的唯一ID
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Symbol {
     T(TerminalId),
     N(NonTerminalId),

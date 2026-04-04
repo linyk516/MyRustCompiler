@@ -1,4 +1,4 @@
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -10,12 +10,12 @@ impl Span {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum TokenKind{
     Ident,      // 标识符
     Keyword(KeywordKind),
@@ -30,7 +30,7 @@ pub enum TokenKind{
 }
 
 /// 关键字枚举类
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum KeywordKind {
     Int32,
     Let,
@@ -69,13 +69,13 @@ impl KeywordKind {
 }
 
 /// 字面值枚举类
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum LiteralKind{
     Int32,
 }
 
 /// 运算符号枚举类
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum OperatorKind {
     Plus,      // +
     Minus,     // -
@@ -110,7 +110,7 @@ impl OperatorKind {
 }
 
 /// 界符枚举类
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum DelimiterKind {
     LParen,    // (
     RParen,    // )
@@ -135,7 +135,7 @@ impl DelimiterKind {
 }
 
 /// 分隔符枚举类
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum SeparatorKind {
     Semicolon, // ;
     Colon,     // :
@@ -154,7 +154,7 @@ impl SeparatorKind {
 }
 
 /// 特殊类型枚举类
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum SpecialKind {
     Arrow,     // ->
     Dot,       // .

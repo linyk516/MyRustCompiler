@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fmt::{Display, Formatter};
-use crate::parser::automation::Automaton;
+use crate::parser::automaton::Automaton;
 use crate::parser::error::{ConflictAction, TableBuildError};
 use crate::parser::first::FirstSets;
 use crate::parser::grammar::Grammar;

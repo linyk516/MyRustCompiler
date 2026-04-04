@@ -1,3 +1,4 @@
+use crate::lexer::token::Token;
 use crate::parser::production::ProductionId;
 use crate::parser::state::StateID;
 use crate::parser::symbol::{NonTerminalId, TerminalId};
@@ -37,8 +38,11 @@ pub enum TableBuildError {
     InvalidGrammar,
 }
 
+#[derive(Debug)]
 pub enum ParseError {
-    UnexpectedToken,
+    UnexpectedToken(Token),
+    StackUnderflow,
+    MissingProduction(ProductionId),
     MissingAction,
     MissingGoto,
 }

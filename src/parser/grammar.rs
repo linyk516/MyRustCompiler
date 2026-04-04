@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 use crate::parser::production::{Production, ProductionId};
 use crate::parser::symbol::*;
 
 /// 保存完整的文法对象
 /// # 定义解释
 /// 包含了终结符、非终结符、产生式，起始符号位置和终结符号位置
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Grammar {
     pub terminals: Vec<Terminal>,
     pub non_terminals: Vec<NonTerminal>,

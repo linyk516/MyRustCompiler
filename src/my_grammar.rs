@@ -1,4 +1,6 @@
-use crate::parser::grammar::{Grammar, GrammarBuilder};
+use serde::{Deserialize, Serialize};
+use crate::parser::grammar::{Grammar, GrammarBuilder, GrammarBuilderErr};
+use crate::parser::symbol::TerminalId;
 /// 方便转换为Symbol，避免into调用过于冗长
 
 macro_rules! rhs {
@@ -7,7 +9,71 @@ macro_rules! rhs {
     };
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Terminals {
+    pub i32_: TerminalId,
+    pub let_: TerminalId,
+    pub if_: TerminalId,
+    pub else_: TerminalId,
+    pub while_: TerminalId,
+    pub return_: TerminalId,
+    pub mut_: TerminalId,
+    pub fn_: TerminalId,
+    pub for_: TerminalId,
+    pub in_: TerminalId,
+    pub loop_: TerminalId,
+    pub break_: TerminalId,
+    pub continue_: TerminalId,
+    pub ident: TerminalId,
+    pub literal_i32: TerminalId,
+    pub assignment: TerminalId,
+    pub plus: TerminalId,
+    pub minus: TerminalId,
+    pub star: TerminalId,
+    pub slash: TerminalId,
+    pub eqeq: TerminalId,
+    pub gt: TerminalId,
+    pub ge: TerminalId,
+    pub lt: TerminalId,
+    pub le: TerminalId,
+    pub ne: TerminalId,
+    pub amp: TerminalId,
+    pub l_paren: TerminalId,
+    pub r_paren: TerminalId,
+    pub l_brace: TerminalId,
+    pub r_brace: TerminalId,
+    pub l_bracket: TerminalId,
+    pub r_bracket: TerminalId,
+    pub comma: TerminalId,
+    pub colon: TerminalId,
+    pub semicolon: TerminalId,
+    pub arrow: TerminalId,
+    pub dot: TerminalId,
+    pub dotdot: TerminalId,
+    pub eof: TerminalId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrammarContext {
+    pub grammar: Grammar,
+    pub terminals: Terminals,
+}
+
+pub fn generate_my_grammar_context() -> Option<GrammarContext> {
+    match build_my_grammar_context() {
+        Ok(context) => Some(context),
+        Err(e) => {
+            println!("Error building grammar: {:?}", e);
+            None
+        },
+    }
+}
+
 pub fn generate_my_grammar() -> Option<Grammar> {
+    generate_my_grammar_context().map(|context| context.grammar)
+}
+
+fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     let mut g = GrammarBuilder::new();
 
     // 关键字
@@ -29,7 +95,7 @@ pub fn generate_my_grammar() -> Option<Grammar> {
     let ident = g.add_terminal("id");
 
     // 数值字面量
-    let _literal_i32 = g.add_terminal("literal_i32");
+    let literal_i32 = g.add_terminal("literal_i32");
 
     // 赋值号
     let assignment = g.add_terminal("=");
@@ -211,6 +277,7 @@ pub fn generate_my_grammar() -> Option<Grammar> {
     g.add_production(add_expr, rhs!(term));
     g.add_production(term, rhs!(factor));
     g.add_production(factor, rhs!(num));
+    g.add_production(num, rhs!(literal_i32));
     g.add_production(factor, rhs!(l_val));
     g.add_production(factor, rhs!(l_paren, expr, r_paren));
 
@@ -472,12 +539,48 @@ pub fn generate_my_grammar() -> Option<Grammar> {
     g.set_start(program);
     let eof = g.add_terminal("eof");
     g.set_eof(eof);
-
-    match g.build() {
-        Ok(grammar) => { Some(grammar) },
-        Err(e) => {
-            println!("Error building grammar: {:?}", e);
-            None
-        },
-    }
+    let terminals = Terminals {
+        i32_,
+        let_,
+        if_,
+        else_,
+        while_,
+        return_,
+        mut_,
+        fn_,
+        for_,
+        in_,
+        loop_,
+        break_,
+        continue_,
+        ident,
+        literal_i32,
+        assignment,
+        plus,
+        minus,
+        star,
+        slash,
+        eqeq,
+        gt,
+        ge,
+        lt,
+        le,
+        ne,
+        amp,
+        l_paren,
+        r_paren,
+        l_brace,
+        r_brace,
+        l_bracket,
+        r_bracket,
+        comma,
+        colon,
+        semicolon,
+        arrow,
+        dot,
+        dotdot,
+        eof,
+    };
+    let grammar = g.build()?;
+    Ok(GrammarContext { grammar, terminals })
 }
