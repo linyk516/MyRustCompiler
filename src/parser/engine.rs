@@ -1,6 +1,7 @@
-use crate::lexer::token::{DelimiterKind, KeywordKind, LiteralKind, OperatorKind, SeparatorKind, SpecialKind, Token};
+use crate::lexer::token::{DelimiterKind, KeywordKind, LiteralKind, OperatorKind, SeparatorKind, Span, SpecialKind, Token};
 use crate::lexer::token::TokenKind::*;
 use crate::my_grammar::GrammarContext;
+use crate::parser::cst::{CSTNode, CSTNodeID, CSTRuleNode, CSTTokenNode, CST};
 use crate::parser::error::ParseError;
 use crate::parser::ParseResult;
 use crate::parser::production::ProductionId;
@@ -20,9 +21,11 @@ impl<'a> ParserEngine<'a> {
     }
 
     pub fn parse(&self, token_iter: impl Iterator<Item = Token>) -> Result<ParseResult, ParseError> {
-        let mut stack: Vec<StateID> = vec![StateID(0)]; // I0为初始状态
+        let mut state_stack: Vec<StateID> = vec![StateID(0)]; // I0为初始状态
+        let mut node_stack: Vec<CSTNodeID> = Vec::new();
         let mut tokens = token_iter.peekable();
         let mut lookahead = tokens.next();
+        let mut cst = CST { nodes: Vec::new(), root: CSTNodeID(0) };
 
         while let Some(token) = lookahead.clone() {
             let t = match self.current_terminal(&token) {
@@ -31,17 +34,35 @@ impl<'a> ParserEngine<'a> {
             };
 
             loop {
-                let current_state = stack.last().ok_or(ParseError::StackUnderflow)?.clone();
+                let current_state = state_stack.last().ok_or(ParseError::StackUnderflow)?.clone();
                 let action = self.table.action.get(&(current_state, t))
                     .ok_or(ParseError::MissingAction)?;
                 match action {
                     Action::Shift(next_state) => {
-                        self.shift(&mut stack, next_state.clone());
+                        self.shift(
+                            &mut state_stack,
+                            &mut node_stack,
+                            &mut cst,
+                            next_state.clone(),
+                            &t,
+                            &token,
+                        );
                         lookahead = tokens.next();
                         break;
                     }
-                    Action::Reduce(production) => self.reduce(&mut stack, *production)?,
-                    Action::Accept => return Ok(ParseResult{}),
+                    Action::Reduce(production) => self.reduce(
+                        &mut state_stack,
+                        &mut node_stack,
+                        &mut cst,
+                        *production,
+                        Some(&token),
+                    )?,
+                    Action::Accept => {
+                        if let Some(root) = node_stack.last().copied() {
+                            cst.root = root;
+                        }
+                        return Ok(ParseResult{ cst });
+                    }
                 }
             }
         }
@@ -49,25 +70,80 @@ impl<'a> ParserEngine<'a> {
         Err(ParseError::MissingAction)
     }
 
-    fn shift(&self, stack: &mut Vec<StateID>, next_state: StateID) {
-        stack.push(next_state);
+    fn shift(
+        &self,
+        state_stack: &mut Vec<StateID>,
+        node_stack: &mut Vec<CSTNodeID>,
+        cst: &mut CST,
+        next_state: StateID,
+        token_id: &TerminalId,
+        token: &Token,
+    ) {
+        let node_id = cst.push_token(CSTTokenNode {
+            token: token_id.clone(),
+            span: token.span.clone(),
+        });
+        node_stack.push(node_id);
+        state_stack.push(next_state);
     }
 
-    fn reduce(&self, stack: &mut Vec<StateID>, production: ProductionId) -> Result<(), ParseError> {
+    fn reduce(
+        &self,
+        state_stack: &mut Vec<StateID>,
+        node_stack: &mut Vec<CSTNodeID>,
+        cst: &mut CST,
+        production: ProductionId,
+        lookahead: Option<&Token>,
+    ) -> Result<(), ParseError> {
         let production = self.ctx.grammar.productions
             .get(production.0)
             .ok_or(ParseError::MissingProduction(production))?;
         let rhs_len = production.rhs.len();
         let lhs = production.lhs.clone();
         for _ in 0..rhs_len {
-            stack.pop().ok_or(ParseError::StackUnderflow)?;
+            state_stack.pop().ok_or(ParseError::StackUnderflow)?;
         }
-        let stack_top = stack.last().ok_or(ParseError::StackUnderflow)?.clone();
+        let mut children = Vec::with_capacity(rhs_len);
+        for _ in 0..rhs_len {
+            children.push(node_stack.pop().ok_or(ParseError::StackUnderflow)?);
+        }
+        children.reverse();
+        let span = Self::compute_rule_span(cst, &children, lookahead);
+        let node_id = cst.push_rule(CSTRuleNode {
+            lhs,
+            production: production.id,
+            children,
+            span,
+        });
+        node_stack.push(node_id);
+
+        let stack_top = state_stack.last().ok_or(ParseError::StackUnderflow)?.clone();
         let next_state = self.table.goto
             .get(&(stack_top, lhs))
             .ok_or(ParseError::MissingGoto)?.clone();
-        stack.push(next_state);
+        state_stack.push(next_state);
         Ok(())
+    }
+
+    fn compute_rule_span(cst: &CST, children: &[CSTNodeID], lookahead: Option<&Token>) -> Span {
+        if let (Some(first), Some(last)) = (children.first(), children.last()) {
+            let first_span = Self::node_span(cst, *first);
+            let last_span = Self::node_span(cst, *last);
+            return Span {
+                start: first_span.start,
+                end: last_span.end,
+            };
+        }
+
+        let pos = lookahead.map(|token| token.span.start).unwrap_or(0);
+        Span { start: pos, end: pos }
+    }
+
+    fn node_span(cst: &CST, node_id: CSTNodeID) -> Span {
+        match cst.node(node_id) {
+            CSTNode::Rule(node) => node.span.clone(),
+            CSTNode::Token(node) => node.span.clone(),
+        }
     }
 
     fn current_terminal(&self, token: &Token) -> Option<TerminalId> {

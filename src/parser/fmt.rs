@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::fmt::{Display, Formatter};
 use crate::parser::automaton::Automaton;
+use crate::parser::cst::{CSTNode, CSTNodeID, CST};
 use crate::parser::error::{ConflictAction, TableBuildError};
 use crate::parser::first::FirstSets;
 use crate::parser::grammar::Grammar;
@@ -9,11 +10,6 @@ use crate::parser::production::{Production, ProductionId};
 use crate::parser::state::ItemSet;
 use crate::parser::symbol::Symbol;
 use crate::parser::table::{Action, ParseTable};
-
-/// 为需要 Grammar 上下文的结构提供统一的字符串绘制入口
-pub trait DrawWithGrammar {
-    fn draw(&self, grammar: &Grammar) -> String;
-}
 
 /// 产生式显示wrapper
 pub struct ProductionDisplay<'a> {
@@ -43,6 +39,15 @@ impl Grammar {
         ProductionDisplay{
             production: &self.productions[id.0],
             grammar: self,
+        }
+    }
+}
+
+impl Production {
+    pub fn display<'a>(&'a self, grammar: &'a Grammar) -> ProductionDisplay<'a> {
+        ProductionDisplay{
+            production: self,
+            grammar,
         }
     }
 }
@@ -165,12 +170,6 @@ impl Automaton {
     }
 }
 
-impl DrawWithGrammar for Automaton {
-    fn draw(&self, grammar: &Grammar) -> String {
-        format!("{}", self.display(grammar))
-    }
-}
-
 /// Action显示wrapper
 pub struct ActionDisplay<'a> {
     action: &'a Action,
@@ -246,12 +245,6 @@ impl Display for ParseTableDisplay<'_> {
 impl ParseTable {
     pub fn display<'a>(&'a self, grammar: &'a Grammar) -> ParseTableDisplay<'a> {
         ParseTableDisplay { table: self, grammar }
-    }
-}
-
-impl DrawWithGrammar for ParseTable {
-    fn draw(&self, grammar: &Grammar) -> String {
-        format!("{}", self.display(grammar))
     }
 }
 
@@ -362,6 +355,60 @@ impl TableBuildError {
             error: self,
             grammar,
             automaton,
+        }
+    }
+}
+
+/// CST显示wrapper
+pub struct CSTDisplay<'a> {
+    pub grammar: &'a Grammar,
+    pub cst: &'a CST,
+    pub source: &'a str,
+}
+
+impl CSTDisplay<'_> {
+    fn traverse<'a>(&'a self, f: &mut Formatter, cur: CSTNodeID, d: usize) -> std::fmt::Result {
+        let cur_node = &self.cst.nodes[cur.0];
+        write!(f, "{}{}",
+               "  ".repeat(d as usize),
+               match cur_node {
+                   CSTNode::Rule(rule) => {
+                       let lhs_str = &self.grammar.non_terminals[rule.lhs.0].name;
+                       let token_str = rule.span.text(self.source).unwrap_or("");
+                       format!("<{}> \"{}\"", lhs_str, token_str)
+                   },
+                   CSTNode::Token(tok) => {
+                       let terminal = &self.grammar.terminals[tok.token.0];
+                       let token_str = tok.span.text(self.source).unwrap_or("");
+                       format!("{} \"{}\"", terminal.name, token_str)
+                   },
+               }
+        )?;
+        if let CSTNode::Rule(rule) = cur_node {
+            for child in &rule.children {
+                writeln!(f)?;
+                self.traverse(f, child.clone(), d + 1)?;
+            }
+        }
+        Ok(())
+    }
+}
+impl Display for CSTDisplay<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.cst.nodes.is_empty() {
+            return Ok(());
+        }
+        self.traverse(f, self.cst.root(), 0)?;
+        Ok(())
+    }
+}
+
+impl Grammar {
+    pub fn display_cst<'a>(&'a self, cst: &'a CST, source: &'a str) -> CSTDisplay<'a> {
+        CSTDisplay {
+            grammar: self,
+            cst,
+            source,
         }
     }
 }

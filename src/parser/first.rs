@@ -1,4 +1,3 @@
-use std::cmp::max;
 use std::collections::BTreeSet;
 use crate::parser::grammar::Grammar;
 use crate::parser::symbol::{NonTerminalId, Symbol, TerminalId};

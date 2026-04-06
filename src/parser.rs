@@ -9,7 +9,11 @@ pub(crate) mod table;
 pub(crate) mod engine;
 pub(crate) mod error;
 mod fmt;
+mod cst;
+
+pub use cst::CST;
+pub use fmt::CSTDisplay;
 
 pub struct ParseResult {
-    
+    pub cst: CST,
 }

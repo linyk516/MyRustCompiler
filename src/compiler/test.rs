@@ -1,4 +1,5 @@
 use super::source::SourceFile;
+use crate::compiler::Compiler;
 use crate::lexer::token::Span;
 use std::path::PathBuf;
 
@@ -90,3 +91,16 @@ fn source_file_from_path_reads_file_content() {
     fs::remove_file(path).expect("should clean temp file");
 }
 
+#[test]
+fn compiler_compile_returns_output_with_tokens_and_cst() {
+    let compiler = Compiler::build().expect("compiler should build");
+    let source = SourceFile::new("fn main() {}");
+
+    let output = compiler.compile(source).expect("source should parse");
+
+    assert!(!output.tokens().is_empty());
+    assert!(!output.cst().nodes.is_empty());
+
+    let cst_text = format!("{}", compiler.display_cst(&output));
+    assert!(!cst_text.is_empty());
+}

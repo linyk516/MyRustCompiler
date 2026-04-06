@@ -3,18 +3,22 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use serde_binary_adv::Serializer;
 use crate::compiler::source::SourceFile;
+use crate::lexer::token::{Span, Token, TokenKind};
 use crate::compiler::utils::FrontendUtil;
 use crate::lexer::Lexer;
 use crate::my_grammar::{generate_my_grammar_context, GrammarContext};
 use crate::parser::automaton::AutomationBuildErr;
 use crate::parser::engine::ParserEngine;
 use crate::parser::error::{ParseError, TableBuildError};
+
 pub mod utils;
 pub mod source;
-mod output;
+pub mod output;
 mod diagnostic;
 #[cfg(test)]
 mod test;
+
+pub use output::CompileOutput;
 
 const FRONTEND_CACHE_SCHEMA_VERSION: u32 = 1;
 
@@ -27,32 +31,45 @@ pub enum CompilerInitError {
 
 
 pub struct Compiler{
-    front_end: FrontendUtil,
+    pub front_end: FrontendUtil,
 }
 
-impl Compiler{
+impl Compiler {
     pub fn build() -> Result<Self, CompilerInitError> {
         let grammar_ctx = generate_my_grammar_context()
             .ok_or(CompilerInitError::GrammarBuild("Failed to build grammar context".to_string()))?;
         let front_end = Self::load_or_build_frontend(grammar_ctx);
-        Ok(Compiler{front_end})
+        Ok(Compiler { front_end })
     }
 
-    pub fn compile(&self, source: SourceFile) -> Result<(), ParseError> {
-        let lexer = Lexer::new(source.text());
+    /// 编译器主流程
+    pub fn compile(&self, source: SourceFile) -> Result<CompileOutput, ParseError> {
+        let tokens = Self::lex_source(&source);
+        let parser = ParserEngine::new(&self.front_end.parse_table, &self.front_end.grammar_ctx);
+        let parse_result = parser.parse(tokens.iter().cloned())?;
+        Ok(CompileOutput::new(source, tokens, parse_result))
+    }
+
+    pub fn display_cst<'a>(&'a self, output: &'a CompileOutput) -> crate::parser::CSTDisplay<'a> {
+        output.display_cst(&self.front_end.grammar_ctx)
+    }
+
+    fn lex_source(source: &SourceFile) -> Vec<Token> {
+        let mut tokens: Vec<Token> = Lexer::new(source.text()).collect();
         let eof_pos = source.len_bytes();
-        let eof = crate::lexer::token::Token {
-            kind: crate::lexer::token::TokenKind::Eof,
-            span: crate::lexer::token::Span {
+        tokens.push(Token {
+            kind: TokenKind::Eof,
+            span: Span {
                 start: eof_pos,
                 end: eof_pos,
             },
-        };
-        let token_stream = lexer.chain(std::iter::once(eof));
-        let parser = ParserEngine::new(&self.front_end.parse_table, &self.front_end.grammar_ctx);
-        parser.parse(token_stream).map(|_| ())
+        });
+        tokens
     }
+}
 
+/// 管理编译器前端的创建和缓存
+impl Compiler{
     fn load_or_build_frontend(grammar_ctx: GrammarContext) -> FrontendUtil {
         let cache_key = Self::frontend_cache_key(&grammar_ctx);
         let cache_path = Self::frontend_cache_path(&cache_key);
@@ -106,4 +123,3 @@ impl Compiler{
     }
 
 }
-
