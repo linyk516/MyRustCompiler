@@ -1,0 +1,96 @@
+fn add(mut a:i32, mut b:i32) -> i32 {
+    let mut sum:i32 = a + b;
+    return sum;
+}
+
+fn square(x:i32) -> i32 {
+    x * x
+}
+
+fn inc_ref(p:&mut i32) -> i32 {
+    *p = *p + 1;
+    return *p;
+}
+
+fn choose(mut x:i32, mut y:i32, mut z:i32) -> i32 {
+    if x > y {
+        if x > z {
+            return x;
+        } else {
+            return z;
+        }
+    } else if y > z {
+        return y;
+    } else {
+        return z;
+    }
+}
+
+fn build_value(mut n:i32) -> i32 {
+    let mut base:i32 = { let mut t:i32 = n + 1; t * 2 };
+    let mut picked:i32 = if base > 10 { base } else { 10 };
+    let mut looped:i32 = loop {
+        if picked > 20 {
+            break picked;
+        } else {
+            break picked + 3;
+        }
+        0
+    };
+    return looped;
+}
+
+fn sum_array(mut n:i32) -> i32 {
+    let mut arr:[i32; 4] = [1, 2, 3, n];
+    let mut pair:(i32, i32) = (arr.0, arr.3);
+    let mut total:i32 = pair.0 + pair.1;
+
+    for mut i:i32 in 0..4 {
+        total = total + i;
+    }
+
+    while total < 30 {
+        total = total + 2;
+        if total == 16 {
+            continue;
+        } else if total > 25 {
+            break;
+        } else {
+            ;
+        }
+    }
+
+    return total; // 行注释
+}
+/*
+块注释
+*/
+
+/*
+/*
+嵌套块注释
+*/
+*/
+fn main() -> i32 {
+    let mut x:i32 = 4;
+    let mut y:i32 = 7;
+    let mut z:i32 = choose(x, y, 5);
+
+    let mut r:&mut i32 = &mut x;
+    *r = *r + z;
+
+    let mut a:i32 = add(x, y);
+    let mut b:i32 = inc_ref(&mut y);
+    let mut c:i32 = build_value(square(a));
+    let mut d:i32 = sum_array(b);
+    let mut tuple:(i32, i32) = (c, d);
+    let mut answer:i32 = tuple.0 + tuple.1;
+
+    if answer > 50 {
+        answer = answer - 5;
+    } else {
+        answer = answer + 5;
+    }
+
+    return answer;
+}

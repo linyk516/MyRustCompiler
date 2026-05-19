@@ -1,0 +1,8 @@
+fn add(mut a:i32, mut b:i32) -> i32 {
+    return a + b;
+}
+
+fn main() -> i32 {
+    let mut value:i32 = add(1,, 2);
+    return value;
+}

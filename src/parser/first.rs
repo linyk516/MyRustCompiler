@@ -1,7 +1,7 @@
-use std::collections::BTreeSet;
 use crate::parser::grammar::Grammar;
-use crate::parser::symbol::{NonTerminalId, Symbol, TerminalId};
 use crate::parser::symbol::Symbol::T;
+use crate::parser::symbol::{NonTerminalId, Symbol, TerminalId};
+use std::collections::BTreeSet;
 
 /// 保存所有非终结符的First集
 pub struct FirstSets {
@@ -74,10 +74,10 @@ impl FirstSets {
                     break;
                 }
                 Symbol::N(n_tid) => {
-                    first.append(
-                        &mut first_sets[n_tid.0].clone()
-                    );
-                    if !nullables.is_nullable(n_tid) { break; }
+                    first.append(&mut first_sets[n_tid.0].clone());
+                    if !nullables.is_nullable(n_tid) {
+                        break;
+                    }
                 }
             }
         }
@@ -92,7 +92,7 @@ impl NullableSet {
 
     pub fn compute(grammar: &Grammar) -> Self {
         let mut change_flag: bool = true;
-        let mut nullable: NullableSet = NullableSet{
+        let mut nullable: NullableSet = NullableSet {
             inner: vec![false; grammar.non_terminals.len()],
         };
         while change_flag {
@@ -113,13 +113,13 @@ impl NullableSet {
                         Symbol::T(_) => {
                             is_all_null = false;
                             break;
-                        },
+                        }
                         Symbol::N(n_tid) => {
                             if !nullable.inner[n_tid.0] {
                                 is_all_null = false;
                                 break;
                             }
-                        },
+                        }
                     }
                 }
                 if is_all_null {

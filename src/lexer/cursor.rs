@@ -1,13 +1,13 @@
 use std::str::CharIndices;
 
 pub(crate) struct Cursor<'a> {
-    src_iter: CharIndices<'a>
+    src_iter: CharIndices<'a>,
 }
 
 impl<'a> Cursor<'a> {
     pub fn new(src: &'a str) -> Self {
         Self {
-            src_iter: src.char_indices()
+            src_iter: src.char_indices(),
         }
     }
 
@@ -30,7 +30,7 @@ impl<'a> Cursor<'a> {
     pub fn is_eof(&self) -> bool {
         self.src_iter.clone().next().is_none()
     }
-    
+
     /// 前进一个字符
     pub fn bump(&mut self) -> Option<char> {
         self.src_iter.next().map(|(_, ch)| ch)
@@ -39,8 +39,11 @@ impl<'a> Cursor<'a> {
     /// 前进到条件
     pub fn eat_while<F: Fn(char) -> bool>(&mut self, pred: F) {
         while let Some(ch) = self.peek() {
-            if pred(ch) { self.bump(); }
-            else { break; }
+            if pred(ch) {
+                self.bump();
+            } else {
+                break;
+            }
         }
     }
 
@@ -50,8 +53,8 @@ impl<'a> Cursor<'a> {
             Some(ch) if pred(ch) => {
                 self.bump();
                 true
-            },
-            _ => false
+            }
+            _ => false,
         }
     }
 }

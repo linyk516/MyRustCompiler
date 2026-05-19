@@ -1,22 +1,27 @@
+use crate::compiler::diagnostic::Diagnostic;
+use crate::compiler::output::CompileOutcome;
+use crate::compiler::source::SourceFile;
+use crate::compiler::utils::FrontendUtil;
+use crate::lexer::error::LexError;
+use crate::lexer::token::{Span, Token, TokenKind};
+use crate::lexer::{LexOutput, Lexer};
+use crate::my_grammar::{GrammarContext, generate_my_grammar_context};
+use crate::parser::CstSpanDisplayMode;
+use crate::parser::automaton::AutomationBuildErr;
+use crate::parser::engine::ParserEngine;
+use crate::parser::error::TableBuildError;
+use serde_binary_adv::Serializer;
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
-use serde_binary_adv::Serializer;
-use crate::compiler::source::SourceFile;
-use crate::lexer::token::{Span, Token, TokenKind};
-use crate::compiler::utils::FrontendUtil;
-use crate::lexer::Lexer;
-use crate::my_grammar::{generate_my_grammar_context, GrammarContext};
-use crate::parser::automaton::AutomationBuildErr;
-use crate::parser::engine::ParserEngine;
-use crate::parser::error::{ParseError, TableBuildError};
 
-pub mod utils;
-pub mod source;
+pub mod diagnostic;
 pub mod output;
-mod diagnostic;
+pub mod render;
+pub mod source;
 #[cfg(test)]
 mod test;
+pub mod utils;
 
 pub use output::CompileOutput;
 
@@ -29,33 +34,76 @@ pub enum CompilerInitError {
     ParseTableBuild(TableBuildError),
 }
 
-
-pub struct Compiler{
+pub struct Compiler {
     pub front_end: FrontendUtil,
 }
 
 impl Compiler {
-    pub fn build() -> Result<Self, CompilerInitError> {
-        let grammar_ctx = generate_my_grammar_context()
-            .ok_or(CompilerInitError::GrammarBuild("Failed to build grammar context".to_string()))?;
-        let front_end = Self::load_or_build_frontend(grammar_ctx);
+    pub fn build(rebuild: bool) -> Result<Self, CompilerInitError> {
+        println!("Building grammar context.");
+        let grammar_ctx = generate_my_grammar_context().ok_or(CompilerInitError::GrammarBuild(
+            "Failed to build grammar context".to_string(),
+        ))?;
+        let front_end = Self::load_or_build_frontend(grammar_ctx, rebuild);
         Ok(Compiler { front_end })
     }
 
     /// 编译器主流程
-    pub fn compile(&self, source: SourceFile) -> Result<CompileOutput, ParseError> {
-        let tokens = Self::lex_source(&source);
+    pub fn compile(&self, source: SourceFile) -> CompileOutcome {
+        let lex_output = Self::lex_source(&source);
+        let tokens = lex_output.tokens;
+        let mut diagnostics = lex_output
+            .errors
+            .iter()
+            .map(|error| Diagnostic::from_lex_error(error, &source))
+            .collect::<Vec<_>>();
+
         let parser = ParserEngine::new(&self.front_end.parse_table, &self.front_end.grammar_ctx);
-        let parse_result = parser.parse(tokens.iter().cloned())?;
-        Ok(CompileOutput::new(source, tokens, parse_result))
+
+        let parse_outcome = parser.parse_with_recovering(tokens.iter().cloned());
+        diagnostics.extend(parse_outcome.errors.iter().map(|error| {
+            Diagnostic::from_parse_error(error, &source, &self.front_end.grammar_ctx)
+        }));
+
+        let output = parse_outcome
+            .result
+            .map(|parse_result| CompileOutput::new(tokens, parse_result));
+
+        CompileOutcome {
+            source,
+            output,
+            diagnostics,
+        }
     }
 
-    pub fn display_cst<'a>(&'a self, output: &'a CompileOutput) -> crate::parser::CSTDisplay<'a> {
-        output.display_cst(&self.front_end.grammar_ctx)
+    pub fn display_cst<'a>(
+        &'a self,
+        output: &'a CompileOutput,
+        source: &'a SourceFile,
+    ) -> crate::parser::CSTDisplay<'a> {
+        output.display_cst(&self.front_end.grammar_ctx, source)
     }
 
-    fn lex_source(source: &SourceFile) -> Vec<Token> {
-        let mut tokens: Vec<Token> = Lexer::new(source.text()).collect();
+    pub fn display_cst_with_mode<'a>(
+        &'a self,
+        output: &'a CompileOutput,
+        source: &'a SourceFile,
+        span_mode: CstSpanDisplayMode,
+    ) -> crate::parser::CSTDisplay<'a> {
+        output.display_cst_with_mode(&self.front_end.grammar_ctx, source, span_mode)
+    }
+
+    fn lex_source(source: &SourceFile) -> LexOutput {
+        let mut lexer = Lexer::new(source.text());
+        let mut tokens: Vec<Token> = vec![];
+        let mut errors: Vec<LexError> = vec![];
+
+        while let Some(result) = lexer.next() {
+            match result {
+                Ok(token) => tokens.push(token),
+                Err(err) => errors.push(err),
+            }
+        }
         let eof_pos = source.len_bytes();
         tokens.push(Token {
             kind: TokenKind::Eof,
@@ -64,22 +112,23 @@ impl Compiler {
                 end: eof_pos,
             },
         });
-        tokens
+        LexOutput { tokens, errors }
     }
 }
 
 /// 管理编译器前端的创建和缓存
-impl Compiler{
-    fn load_or_build_frontend(grammar_ctx: GrammarContext) -> FrontendUtil {
+impl Compiler {
+    fn load_or_build_frontend(grammar_ctx: GrammarContext, force_rebuild: bool) -> FrontendUtil {
         let cache_key = Self::frontend_cache_key(&grammar_ctx);
         let cache_path = Self::frontend_cache_path(&cache_key);
-        if let Some(front_end) = Self::try_load_frontend_cache(&cache_path) {
+        if let Some(front_end) = Self::try_load_frontend_cache(&cache_path)
+            && !force_rebuild
+        {
             println!("Loaded frontend from cache: {:?}", cache_path);
             front_end
         } else {
             println!("Building frontend...");
-            let front_end = FrontendUtil::build(grammar_ctx)
-                .expect("Failed to build frontend");
+            let front_end = FrontendUtil::build(grammar_ctx).expect("Failed to build frontend");
             Self::store_frontend_cache(&cache_path, &front_end);
             println!("Stored frontend to cache: {:?}", cache_path);
             front_end
@@ -96,6 +145,7 @@ impl Compiler{
         let hash_value = hasher.finish();
         format!("frontend-v{}-{}", FRONTEND_CACHE_SCHEMA_VERSION, hash_value)
     }
+
     fn frontend_cache_path(cache_key: &str) -> PathBuf {
         let mut cache_path = std::env::current_dir().unwrap();
         cache_path.push("cache");
@@ -104,6 +154,7 @@ impl Compiler{
         cache_path.set_extension("bin");
         cache_path
     }
+
     fn try_load_frontend_cache(path: &Path) -> Option<FrontendUtil> {
         let mut file = File::open(path).ok()?;
         match FrontendUtil::load_from_file(&mut file) {
@@ -114,12 +165,14 @@ impl Compiler{
             }
         }
     }
+
     fn store_frontend_cache(path: &Path, front_end: &FrontendUtil) {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
         let mut file = File::create(path).expect("Failed to create frontend cache file");
-        front_end.save_to_file(&mut file).expect("Failed to save frontend to cache file");
+        front_end
+            .save_to_file(&mut file)
+            .expect("Failed to save frontend to cache file");
     }
-
 }

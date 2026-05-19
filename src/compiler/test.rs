@@ -1,6 +1,9 @@
 use super::source::SourceFile;
 use crate::compiler::Compiler;
+use crate::compiler::diagnostic::DiagnosticDetails;
+use crate::compiler::render::{CliRenderer, RenderConfig};
 use crate::lexer::token::Span;
+use crate::parser::CstSpanDisplayMode;
 use std::path::PathBuf;
 
 #[test]
@@ -28,7 +31,10 @@ fn source_file_new_handles_empty_text() {
 fn source_file_with_path_keeps_path_and_text() {
     let source = SourceFile::with_path("/tmp/sample.my", "abc");
 
-    assert_eq!(source.path(), Some(PathBuf::from("/tmp/sample.my").as_path()));
+    assert_eq!(
+        source.path(),
+        Some(PathBuf::from("/tmp/sample.my").as_path())
+    );
     assert_eq!(source.text(), "abc");
 }
 
@@ -79,7 +85,11 @@ fn source_file_from_path_reads_file_content() {
         .duration_since(UNIX_EPOCH)
         .expect("clock should be after unix epoch")
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("source_file_test_{}_{}.my", std::process::id(), unique));
+    let path = std::env::temp_dir().join(format!(
+        "source_file_test_{}_{}.my",
+        std::process::id(),
+        unique
+    ));
 
     fs::write(&path, "line1\nline2").expect("should create temp file");
     let source = SourceFile::from_path(&path).expect("should load file");
@@ -93,14 +103,154 @@ fn source_file_from_path_reads_file_content() {
 
 #[test]
 fn compiler_compile_returns_output_with_tokens_and_cst() {
-    let compiler = Compiler::build().expect("compiler should build");
+    let compiler = Compiler::build(false).expect("compiler should build");
     let source = SourceFile::new("fn main() {}");
 
-    let output = compiler.compile(source).expect("source should parse");
+    let outcome = compiler.compile(source);
+    assert!(!outcome.has_errors());
+    let output = outcome.output.as_ref().expect("source should parse");
 
     assert!(!output.tokens().is_empty());
     assert!(!output.cst().nodes.is_empty());
 
-    let cst_text = format!("{}", compiler.display_cst(&output));
+    let cst_text = format!("{}", compiler.display_cst(output, &outcome.source));
     assert!(!cst_text.is_empty());
+}
+
+#[test]
+fn compiler_compile_returns_error_for_unknown_char_in_function_body() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() {@}");
+
+    let outcome = compiler.compile(source);
+
+    assert!(matches!(
+        outcome
+            .diagnostics
+            .first()
+            .map(|diagnostic| &diagnostic.details),
+        Some(DiagnosticDetails::LexUnknownCharacter { ch: '@' })
+    ));
+    assert!(outcome.output.is_some());
+    assert_eq!(outcome.diagnostics[0].labels[0].span.start, 11);
+    assert_eq!(outcome.diagnostics[0].labels[0].span.end, 12);
+}
+
+#[test]
+fn compiler_compile_continues_to_parse_after_lex_error() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() { @ let x:i32 = ; }");
+
+    let outcome = compiler.compile(source);
+
+    assert!(outcome.diagnostics.iter().any(|diagnostic| {
+        matches!(
+            diagnostic.details,
+            DiagnosticDetails::LexUnknownCharacter { ch: '@' }
+        )
+    }));
+    assert!(outcome.diagnostics.iter().any(|diagnostic| {
+        matches!(
+            diagnostic.details,
+            DiagnosticDetails::ParseUnexpectedToken { .. }
+        )
+    }));
+}
+
+#[test]
+fn compiler_compile_returns_error_for_unterminated_block_comment() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() { /* comment");
+
+    let outcome = compiler.compile(source);
+
+    assert!(matches!(
+        outcome
+            .diagnostics
+            .first()
+            .map(|diagnostic| &diagnostic.details),
+        Some(DiagnosticDetails::LexUnterminatedBlockComment)
+    ));
+    assert_eq!(outcome.diagnostics[0].labels[0].span.start, 12);
+    assert_eq!(
+        outcome.diagnostics[0].labels[0].span.end,
+        "fn main() { /* comment".len()
+    );
+}
+
+#[test]
+fn compiler_cst_display_can_switch_to_range_mode() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() {}");
+
+    let outcome = compiler.compile(source);
+    assert!(!outcome.has_errors());
+    let output = outcome.output.as_ref().expect("source should parse");
+
+    let cst_text = format!(
+        "{}",
+        compiler.display_cst_with_mode(output, &outcome.source, CstSpanDisplayMode::Text)
+    );
+    let cst_range = format!(
+        "{}",
+        compiler.display_cst_with_mode(output, &outcome.source, CstSpanDisplayMode::Range)
+    );
+
+    assert!(cst_text.contains("\"fn main() {}\""));
+    assert!(cst_range.contains("[0.."));
+    assert!(!cst_range.contains("\"fn main() {}\""));
+}
+
+#[test]
+fn cli_renderer_prints_source_snippet_for_diagnostic() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() {@}");
+    let outcome = compiler.compile(source);
+    let renderer = CliRenderer::new(RenderConfig::new(false));
+
+    let rendered = renderer.render_outcome(&compiler, &outcome);
+
+    assert!(rendered.stderr.contains("error[E0001]"));
+    assert!(rendered.stderr.contains("fn main() {@}"));
+    assert!(rendered.stderr.contains("^ unknown character `@`"));
+    assert!(
+        rendered
+            .stdout
+            .contains("Compile finished with diagnostics")
+    );
+    assert!(!rendered.stderr.contains("Compile failed."));
+}
+
+#[test]
+fn cli_renderer_prints_token_table_when_enabled() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() {}");
+    let outcome = compiler.compile(source);
+    let renderer = CliRenderer::new(RenderConfig::new(false).with_show_tokens(true));
+
+    let rendered = renderer.render_outcome(&compiler, &outcome);
+
+    assert!(rendered.stdout.contains("Tokens"));
+    assert!(rendered.stdout.contains("Kind"));
+    assert!(rendered.stdout.contains("Text"));
+    assert!(rendered.stdout.contains("Line:Col"));
+    assert!(rendered.stdout.contains("Keyword(Fn)"));
+    assert!(rendered.stdout.contains("Ident"));
+    assert!(rendered.stdout.contains("<eof>"));
+    assert!(rendered.stdout.contains("1:1"));
+}
+
+#[test]
+fn cli_renderer_can_color_diagnostics_when_enabled() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() {@}");
+    let outcome = compiler.compile(source);
+    let renderer = CliRenderer::new(RenderConfig::new(false).with_color(true));
+
+    let rendered = renderer.render_outcome(&compiler, &outcome);
+
+    assert!(rendered.stderr.contains("\x1b[31;1merror\x1b[0m"));
+    assert!(rendered.stderr.contains("\x1b[1m[E0001]\x1b[0m"));
+    assert!(rendered.stderr.contains("\x1b[34;1m-->\x1b[0m"));
+    assert!(rendered.stderr.contains("\x1b[31m"));
 }

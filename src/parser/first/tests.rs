@@ -192,7 +192,11 @@ fn first_of_sequence_stops_after_terminal_in_sequence() {
     let nullable = NullableSet::compute(&grammar);
     let first = FirstSets::compute(&grammar, &nullable);
 
-    let seq_first = first.first_of_sequence(&nullable, &[Symbol::N(n_a), Symbol::T(t_b), Symbol::N(n_c)], &t_z);
+    let seq_first = first.first_of_sequence(
+        &nullable,
+        &[Symbol::N(n_a), Symbol::T(t_b), Symbol::N(n_c)],
+        &t_z,
+    );
 
     assert!(seq_first.contains(&t_a));
     assert!(seq_first.contains(&t_b));
@@ -222,4 +226,3 @@ fn first_of_sequence_returns_lookahead_for_empty_sequence() {
     assert!(seq_first.contains(&t_lookahead));
     assert_eq!(seq_first.len(), 1);
 }
-

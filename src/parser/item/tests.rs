@@ -100,4 +100,3 @@ fn advance_increments_dot_and_keeps_identity_fields() {
     // Original item should remain unchanged.
     assert_eq!(item.dot(), 1);
 }
-

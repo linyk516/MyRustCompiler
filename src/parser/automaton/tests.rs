@@ -32,13 +32,25 @@ fn closure_expands_non_terminal_with_first_of_following_symbol() {
     let first = FirstSets::compute(&grammar, &nullable);
 
     let mut kernel = ItemSet::new();
-    kernel.insert(Lr1Item::new(crate::parser::production::ProductionId(p_s), 0, t_eof));
+    kernel.insert(Lr1Item::new(
+        crate::parser::production::ProductionId(p_s),
+        0,
+        t_eof,
+    ));
 
     let closure = Automaton::closure_(&grammar, &nullable, &first, &kernel);
 
     assert_eq!(closure.len(), 2);
-    assert!(closure.iter().any(|item| item.production_id().0 == p_s && item.dot() == 0 && item.lookahead == t_eof));
-    assert!(closure.iter().any(|item| item.production_id().0 == p_b && item.dot() == 0 && item.lookahead == t_c));
+    assert!(
+        closure.iter().any(|item| item.production_id().0 == p_s
+            && item.dot() == 0
+            && item.lookahead == t_eof)
+    );
+    assert!(
+        closure
+            .iter()
+            .any(|item| item.production_id().0 == p_b && item.dot() == 0 && item.lookahead == t_c)
+    );
 }
 
 #[test]
@@ -70,8 +82,16 @@ fn closure_propagates_multiple_lookaheads_when_suffix_nullable() {
 
     let closure = Automaton::closure_(&grammar, &nullable, &first, &kernel);
 
-    assert!(closure.iter().any(|item| item.production_id() == p_b && item.dot() == 0 && item.lookahead == t_c));
-    assert!(closure.iter().any(|item| item.production_id() == p_b && item.dot() == 0 && item.lookahead == t_eof));
+    assert!(
+        closure
+            .iter()
+            .any(|item| item.production_id() == p_b && item.dot() == 0 && item.lookahead == t_c)
+    );
+    assert!(
+        closure
+            .iter()
+            .any(|item| item.production_id() == p_b && item.dot() == 0 && item.lookahead == t_eof)
+    );
 }
 
 #[test]
@@ -102,22 +122,41 @@ fn closure_deduplicates_items_on_recursive_productions() {
 
     // kernel item + two unique expanded B items
     assert_eq!(closure.len(), 3);
-    assert!(closure.iter().any(|item| item.production_id() == p_s && item.dot() == 0 && item.lookahead == t_eof));
-    assert!(closure.iter().any(|item| item.production_id() == p_b_rec && item.dot() == 0 && item.lookahead == t_eof));
-    assert!(closure.iter().any(|item| item.production_id() == p_b_term && item.dot() == 0 && item.lookahead == t_eof));
+    assert!(
+        closure
+            .iter()
+            .any(|item| item.production_id() == p_s && item.dot() == 0 && item.lookahead == t_eof)
+    );
+    assert!(
+        closure.iter().any(|item| item.production_id() == p_b_rec
+            && item.dot() == 0
+            && item.lookahead == t_eof)
+    );
+    assert!(closure.iter().any(|item| item.production_id() == p_b_term
+        && item.dot() == 0
+        && item.lookahead == t_eof));
 }
 
 #[test]
 fn goto_returns_empty_when_no_item_matches_symbol() {
     let (grammar, p_s, _p_b, _t_c, t_eof) = build_grammar_with_rhs_terminal();
-    let t_x = grammar.terminals.iter().position(|t| t.name == "b").map(TerminalId).expect("b should exist");
+    let t_x = grammar
+        .terminals
+        .iter()
+        .position(|t| t.name == "b")
+        .map(TerminalId)
+        .expect("b should exist");
 
     let nullable = NullableSet::compute(&grammar);
     let first = FirstSets::compute(&grammar, &nullable);
 
     let mut kernel = ItemSet::new();
     // S -> .B c, # ; next symbol is non-terminal B, not terminal b.
-    kernel.insert(Lr1Item::new(crate::parser::production::ProductionId(p_s), 0, t_eof));
+    kernel.insert(Lr1Item::new(
+        crate::parser::production::ProductionId(p_s),
+        0,
+        t_eof,
+    ));
 
     let goto = Automaton::goto_(&grammar, &nullable, &first, &kernel, Symbol::T(t_x));
     assert!(goto.is_empty());
@@ -126,19 +165,37 @@ fn goto_returns_empty_when_no_item_matches_symbol() {
 #[test]
 fn goto_shifts_items_with_matching_symbol() {
     let (grammar, p_s, _p_b, _t_c, t_eof) = build_grammar_with_rhs_terminal();
-    let n_b = grammar.non_terminals.iter().position(|n| n.name == "B").expect("B should exist");
+    let n_b = grammar
+        .non_terminals
+        .iter()
+        .position(|n| n.name == "B")
+        .expect("B should exist");
 
     let nullable = NullableSet::compute(&grammar);
     let first = FirstSets::compute(&grammar, &nullable);
 
     let mut kernel = ItemSet::new();
-    kernel.insert(Lr1Item::new(crate::parser::production::ProductionId(p_s), 0, t_eof));
+    kernel.insert(Lr1Item::new(
+        crate::parser::production::ProductionId(p_s),
+        0,
+        t_eof,
+    ));
 
-    let goto = Automaton::goto_(&grammar, &nullable, &first, &kernel, Symbol::N(crate::parser::symbol::NonTerminalId(n_b)));
+    let goto = Automaton::goto_(
+        &grammar,
+        &nullable,
+        &first,
+        &kernel,
+        Symbol::N(crate::parser::symbol::NonTerminalId(n_b)),
+    );
 
     // Only S -> B . c, # should exist.
     assert_eq!(goto.len(), 1);
-    assert!(goto.iter().any(|item| item.production_id().0 == p_s && item.dot() == 1 && item.lookahead == t_eof));
+    assert!(
+        goto.iter().any(|item| item.production_id().0 == p_s
+            && item.dot() == 1
+            && item.lookahead == t_eof)
+    );
 }
 
 #[test]
@@ -169,11 +226,21 @@ fn goto_applies_closure_on_target_kernel() {
     let goto = Automaton::goto_(&grammar, &nullable, &first, &kernel, Symbol::N(n_b));
 
     // Kernel shift: S -> B . C, #
-    assert!(goto.iter().any(|item| item.production_id() == p_s && item.dot() == 1 && item.lookahead == t_hash));
+    assert!(
+        goto.iter()
+            .any(|item| item.production_id() == p_s && item.dot() == 1 && item.lookahead == t_hash)
+    );
     // Closure expansion on C because next symbol is non-terminal C.
-    assert!(goto.iter().any(|item| item.production_id() == p_c && item.dot() == 0 && item.lookahead == t_hash));
+    assert!(
+        goto.iter()
+            .any(|item| item.production_id() == p_c && item.dot() == 0 && item.lookahead == t_hash)
+    );
     // Should not introduce unrelated B production here.
-    assert!(!goto.iter().any(|item| item.production_id() == p_b && item.dot() == 0 && item.lookahead == t_hash));
+    assert!(
+        !goto
+            .iter()
+            .any(|item| item.production_id() == p_b && item.dot() == 0 && item.lookahead == t_hash)
+    );
 }
 
 #[test]
@@ -207,8 +274,14 @@ fn goto_preserves_distinct_lookaheads_after_shift() {
     let goto = Automaton::goto_(&grammar, &nullable, &first, &closure, Symbol::T(t_b));
 
     // B -> b. should be produced with both lookaheads from closure expansion: c and #.
-    assert!(goto.iter().any(|item| item.production_id() == p_b && item.dot() == 1 && item.lookahead == t_c));
-    assert!(goto.iter().any(|item| item.production_id() == p_b && item.dot() == 1 && item.lookahead == t_eof));
+    assert!(
+        goto.iter()
+            .any(|item| item.production_id() == p_b && item.dot() == 1 && item.lookahead == t_c)
+    );
+    assert!(
+        goto.iter()
+            .any(|item| item.production_id() == p_b && item.dot() == 1 && item.lookahead == t_eof)
+    );
 }
 
 #[test]
@@ -250,14 +323,18 @@ fn build_canonical_collection_builds_states_and_transitions_for_minimal_grammar(
     assert!(automation.states.len() >= 3);
 
     // From I0 there should be transitions on S and a.
-    assert!(automation
-        .transitions
-        .iter()
-        .any(|((sid, sym), _)| sid.0 == 0 && *sym == Symbol::N(n_s)));
-    assert!(automation
-        .transitions
-        .iter()
-        .any(|((sid, sym), _)| sid.0 == 0 && *sym == Symbol::T(t_a)));
+    assert!(
+        automation
+            .transitions
+            .iter()
+            .any(|((sid, sym), _)| sid.0 == 0 && *sym == Symbol::N(n_s))
+    );
+    assert!(
+        automation
+            .transitions
+            .iter()
+            .any(|((sid, sym), _)| sid.0 == 0 && *sym == Symbol::T(t_a))
+    );
 }
 
 #[test]
@@ -289,9 +366,9 @@ fn build_canonical_collection_has_advance_target_for_shifted_terminal_item() {
 
     // The target state should include a reduce item A -> a .
     let target_state = target.expect("transition target should exist");
-    assert!(automation.states[target_state]
-        .iter()
-        .any(|item| item.production_id().0 == 1 && item.dot() == 1));
-
+    assert!(
+        automation.states[target_state]
+            .iter()
+            .any(|item| item.production_id().0 == 1 && item.dot() == 1)
+    );
 }
-

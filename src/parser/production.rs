@@ -1,6 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::parser::symbol::{NonTerminalId, Symbol};
-
+use serde::{Deserialize, Serialize};
 
 /// 产生式ID
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

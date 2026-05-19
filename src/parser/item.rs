@@ -31,7 +31,10 @@ pub struct Lr1Item {
 
 impl Lr1Item {
     pub fn new(production: ProductionId, dot: usize, lookahead: TerminalId) -> Lr1Item {
-        Lr1Item { core: ItemCore::new(production, dot), lookahead }
+        Lr1Item {
+            core: ItemCore::new(production, dot),
+            lookahead,
+        }
     }
 
     pub fn production_id(&self) -> ProductionId {
@@ -67,7 +70,7 @@ impl Lr1Item {
 }
 impl Lr1Item {
     /// 创建当前dot位置之后的符号序列，不包含lookahead
-    pub fn construct_sequence_after_next_symbol<'a>(&self, grammar: &'a Grammar) -> &'a[Symbol] {
+    pub fn construct_sequence_after_next_symbol<'a>(&self, grammar: &'a Grammar) -> &'a [Symbol] {
         let production = &grammar.productions[self.core.production.0];
         if production.rhs.len() <= self.core.dot {
             return &[];

@@ -1,7 +1,5 @@
-use std::collections::BTreeSet;
-use std::fmt::{Display, Formatter};
 use crate::parser::automaton::Automaton;
-use crate::parser::cst::{CSTNode, CSTNodeID, CST};
+use crate::parser::cst::{CST, CSTNode, CSTNodeID};
 use crate::parser::error::{ConflictAction, TableBuildError};
 use crate::parser::first::FirstSets;
 use crate::parser::grammar::Grammar;
@@ -10,6 +8,8 @@ use crate::parser::production::{Production, ProductionId};
 use crate::parser::state::ItemSet;
 use crate::parser::symbol::Symbol;
 use crate::parser::table::{Action, ParseTable};
+use std::collections::BTreeSet;
+use std::fmt::{Display, Formatter};
 
 /// 产生式显示wrapper
 pub struct ProductionDisplay<'a> {
@@ -17,26 +17,29 @@ pub struct ProductionDisplay<'a> {
     grammar: &'a Grammar,
 }
 
-impl Display for ProductionDisplay<'_>{
+impl Display for ProductionDisplay<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let lhs = &self.grammar.non_terminals[self.production.lhs.0];
-        let rhs: Vec<String> = self.production.rhs.iter().map(|sym| {
-            match sym {
+        let rhs: Vec<String> = self
+            .production
+            .rhs
+            .iter()
+            .map(|sym| match sym {
                 Symbol::T(tid) => {
                     format!("{}", self.grammar.terminals[tid.0].name)
-                },
+                }
                 Symbol::N(n_tid) => {
                     format!("<{}>", self.grammar.non_terminals[n_tid.0].name)
-                },
-            }
-        }).collect();
+                }
+            })
+            .collect();
         write!(f, "<{}> -> {}", lhs.name, rhs.join(" "))
     }
 }
 
 impl Grammar {
     pub fn display_production(&'_ self, id: ProductionId) -> ProductionDisplay<'_> {
-        ProductionDisplay{
+        ProductionDisplay {
             production: &self.productions[id.0],
             grammar: self,
         }
@@ -45,7 +48,7 @@ impl Grammar {
 
 impl Production {
     pub fn display<'a>(&'a self, grammar: &'a Grammar) -> ProductionDisplay<'a> {
-        ProductionDisplay{
+        ProductionDisplay {
             production: self,
             grammar,
         }
@@ -70,10 +73,10 @@ impl FirstSets {
 impl Display for FirstSetsDisplay<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         for (i, sym) in self.grammar.non_terminals.iter().enumerate() {
-            let first_set: Vec<String> = self.first.get_first_sets()[i].iter().
-                map(|tid| {
-                self.grammar.terminals[tid.0].name.clone()
-            }).collect();
+            let first_set: Vec<String> = self.first.get_first_sets()[i]
+                .iter()
+                .map(|tid| self.grammar.terminals[tid.0].name.clone())
+                .collect();
             writeln!(f, "FIRST(<{}>) = {{ {} }}", sym.name, first_set.join(", "))?;
         }
         Ok(())
@@ -89,16 +92,18 @@ pub struct ItemDisplay<'a> {
 impl Display for ItemDisplay<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let production = &self.grammar.productions[self.item.core.production.0];
-        let mut rhs: Vec<String> = production.rhs.iter().map(|sym| {
-            match sym {
+        let mut rhs: Vec<String> = production
+            .rhs
+            .iter()
+            .map(|sym| match sym {
                 Symbol::T(tid) => {
                     format!("{}", self.grammar.terminals[tid.0].name)
-                },
+                }
                 Symbol::N(n_tid) => {
                     format!("<{}>", self.grammar.non_terminals[n_tid.0].name)
-                },
-            }
-        }).collect();
+                }
+            })
+            .collect();
         rhs.insert(self.item.core.dot, "·".to_string());
         let lookahead = &self.grammar.terminals[self.item.lookahead.0].name;
         let lhs = &self.grammar.non_terminals[production.lhs.0].name;
@@ -109,7 +114,10 @@ impl Display for ItemDisplay<'_> {
 
 impl Lr1Item {
     pub fn display<'a>(&'a self, grammar: &'a Grammar) -> ItemDisplay<'a> {
-        ItemDisplay{item: self, grammar}
+        ItemDisplay {
+            item: self,
+            grammar,
+        }
     }
 }
 
@@ -130,7 +138,10 @@ impl Display for ItemSetDisplay<'_> {
 
 impl ItemSet {
     pub fn display<'a>(&'a self, grammar: &'a Grammar) -> ItemSetDisplay<'a> {
-        ItemSetDisplay{items: self, grammar}
+        ItemSetDisplay {
+            items: self,
+            grammar,
+        }
     }
 }
 
@@ -150,9 +161,9 @@ impl Display for AutomationDisplay<'_> {
         write!(f, "Transitions:\n")?;
         // 逐个打印转移
         for transition in self.automation.transitions.iter() {
-            let from_state = transition.0 .0 .0;
-            let symbol = &transition.0 .1;
-            let to_state = transition.1 .0;
+            let from_state = transition.0.0.0;
+            let symbol = &transition.0.1;
+            let to_state = transition.1.0;
             let symbol_str = match symbol {
                 Symbol::T(tid) => self.grammar.terminals[tid.0].name.clone(),
                 Symbol::N(n_tid) => format!("<{}>", self.grammar.non_terminals[n_tid.0].name),
@@ -166,7 +177,10 @@ impl Display for AutomationDisplay<'_> {
 
 impl Automaton {
     pub fn display<'a>(&'a self, grammar: &'a Grammar) -> AutomationDisplay<'a> {
-        AutomationDisplay{automation: self, grammar}
+        AutomationDisplay {
+            automation: self,
+            grammar,
+        }
     }
 }
 
@@ -190,7 +204,10 @@ impl Display for ActionDisplay<'_> {
 
 impl Action {
     pub fn display<'a>(&'a self, grammar: &'a Grammar) -> ActionDisplay<'a> {
-        ActionDisplay { action: self, grammar }
+        ActionDisplay {
+            action: self,
+            grammar,
+        }
     }
 }
 
@@ -220,7 +237,12 @@ impl Display for ParseTableDisplay<'_> {
                         continue;
                     }
                     let terminal_name = &self.grammar.terminals[terminal.0].name;
-                    writeln!(f, "    {} => {}", terminal_name, action.display(self.grammar))?;
+                    writeln!(
+                        f,
+                        "    {} => {}",
+                        terminal_name,
+                        action.display(self.grammar)
+                    )?;
                 }
             }
 
@@ -244,7 +266,10 @@ impl Display for ParseTableDisplay<'_> {
 
 impl ParseTable {
     pub fn display<'a>(&'a self, grammar: &'a Grammar) -> ParseTableDisplay<'a> {
-        ParseTableDisplay { table: self, grammar }
+        ParseTableDisplay {
+            table: self,
+            grammar,
+        }
     }
 }
 
@@ -268,7 +293,10 @@ impl Display for ConflictActionDisplay<'_> {
 
 impl ConflictAction {
     pub fn display<'a>(&'a self, grammar: &'a Grammar) -> ConflictActionDisplay<'a> {
-        ConflictActionDisplay { action: self, grammar }
+        ConflictActionDisplay {
+            action: self,
+            grammar,
+        }
     }
 }
 
@@ -291,8 +319,7 @@ impl Display for TableBuildErrorDisplay<'_> {
                 writeln!(
                     f,
                     "Shift/Reduce conflict at state I{} on terminal {}",
-                    state.0,
-                    self.grammar.terminals[terminal.0].name
+                    state.0, self.grammar.terminals[terminal.0].name
                 )?;
                 writeln!(f, "  existing: {}", existing.display(self.grammar))?;
                 writeln!(f, "  incoming: {}", incoming.display(self.grammar))?;
@@ -312,8 +339,7 @@ impl Display for TableBuildErrorDisplay<'_> {
                 writeln!(
                     f,
                     "Reduce/Reduce conflict at state I{} on terminal {}",
-                    state.0,
-                    self.grammar.terminals[terminal.0].name
+                    state.0, self.grammar.terminals[terminal.0].name
                 )?;
                 writeln!(f, "  existing: {}", existing.display(self.grammar))?;
                 writeln!(f, "  incoming: {}", incoming.display(self.grammar))?;
@@ -333,14 +359,15 @@ impl Display for TableBuildErrorDisplay<'_> {
                 writeln!(
                     f,
                     "Invalid GOTO entry at state I{} on non-terminal <{}>",
-                    state.0,
-                    self.grammar.non_terminals[non_terminal.0].name
+                    state.0, self.grammar.non_terminals[non_terminal.0].name
                 )?;
                 writeln!(f, "  existing: I{}", existing.0)?;
                 writeln!(f, "  incoming: I{}", incoming.0)?;
                 Ok(())
             }
-            TableBuildError::InvalidGrammar => write!(f, "Invalid grammar while building parse table"),
+            TableBuildError::InvalidGrammar => {
+                write!(f, "Invalid grammar while building parse table")
+            }
         }
     }
 }
@@ -360,29 +387,51 @@ impl TableBuildError {
 }
 
 /// CST显示wrapper
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CstSpanDisplayMode {
+    Text,
+    Range,
+}
+
 pub struct CSTDisplay<'a> {
     pub grammar: &'a Grammar,
     pub cst: &'a CST,
     pub source: &'a str,
+    pub span_mode: CstSpanDisplayMode,
 }
 
 impl CSTDisplay<'_> {
+    pub fn with_span_mode(mut self, span_mode: CstSpanDisplayMode) -> Self {
+        self.span_mode = span_mode;
+        self
+    }
+
+    fn render_span(&self, span: &crate::lexer::token::Span) -> String {
+        match self.span_mode {
+            CstSpanDisplayMode::Text => {
+                let token_str = span.text(self.source).unwrap_or("");
+                format!("\"{}\"", token_str)
+            }
+            CstSpanDisplayMode::Range => format!("[{}..{})", span.start, span.end),
+        }
+    }
+
     fn traverse<'a>(&'a self, f: &mut Formatter, cur: CSTNodeID, d: usize) -> std::fmt::Result {
         let cur_node = &self.cst.nodes[cur.0];
-        write!(f, "{}{}",
-               "  ".repeat(d as usize),
-               match cur_node {
-                   CSTNode::Rule(rule) => {
-                       let lhs_str = &self.grammar.non_terminals[rule.lhs.0].name;
-                       let token_str = rule.span.text(self.source).unwrap_or("");
-                       format!("<{}> \"{}\"", lhs_str, token_str)
-                   },
-                   CSTNode::Token(tok) => {
-                       let terminal = &self.grammar.terminals[tok.token.0];
-                       let token_str = tok.span.text(self.source).unwrap_or("");
-                       format!("{} \"{}\"", terminal.name, token_str)
-                   },
-               }
+        write!(
+            f,
+            "{}{}",
+            "  ".repeat(d as usize),
+            match cur_node {
+                CSTNode::Rule(rule) => {
+                    let lhs_str = &self.grammar.non_terminals[rule.lhs.0].name;
+                    format!("<{}> {}", lhs_str, self.render_span(&rule.span))
+                }
+                CSTNode::Token(tok) => {
+                    let terminal = &self.grammar.terminals[tok.token.0];
+                    format!("{} {}", terminal.name, self.render_span(&tok.span))
+                }
+            }
         )?;
         if let CSTNode::Rule(rule) = cur_node {
             for child in &rule.children {
@@ -409,6 +458,7 @@ impl Grammar {
             grammar: self,
             cst,
             source,
+            span_mode: CstSpanDisplayMode::Text,
         }
     }
 }

@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use crate::parser::production::{Production, ProductionId};
 use crate::parser::symbol::*;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// 保存完整的文法对象
 /// # 定义解释
@@ -41,7 +41,9 @@ impl Grammar {
 
     pub fn augmented_start_production(&self) -> Option<ProductionId> {
         // augmented_start -> start
-        self.productions_for_lhs(self.augmented_start).get(0).cloned()
+        self.productions_for_lhs(self.augmented_start)
+            .get(0)
+            .cloned()
     }
 
     pub fn eof(&self) -> TerminalId {
@@ -71,7 +73,7 @@ pub enum GrammarBuilderErr {
 
 impl GrammarBuilder {
     pub fn new() -> Self {
-        GrammarBuilder{
+        GrammarBuilder {
             terminals: Vec::new(),
             non_terminals: Vec::new(),
             productions: Vec::new(),
@@ -91,7 +93,7 @@ impl GrammarBuilder {
 
         // 获取“下一个有效ID”
         let id = TerminalId(self.terminals.len());
-        self.terminals.push(Terminal { name: name.clone()});
+        self.terminals.push(Terminal { name: name.clone() });
         self.name_to_terminal.insert(name, id);
         id
     }
@@ -113,16 +115,14 @@ impl GrammarBuilder {
     /// 添加产生式
     pub fn add_production<I>(&mut self, lhs: NonTerminalId, rhs: I) -> ProductionId
     where
-        I: IntoIterator<Item=Symbol>
+        I: IntoIterator<Item = Symbol>,
     {
         let id = ProductionId(self.productions.len());
-        self.productions.push(
-            Production{
-                id,
-                lhs,
-                rhs: rhs.into_iter().collect(),
-            }
-        );
+        self.productions.push(Production {
+            id,
+            lhs,
+            rhs: rhs.into_iter().collect(),
+        });
         id
     }
 
@@ -142,21 +142,22 @@ impl GrammarBuilder {
         let eof = self.eof.ok_or(GrammarBuilderErr::MissingEndSymbol)?;
         // 构造扩展起始符号，需要选取未使用的名字
         let mut augmented_start_name = format!("{}'", self.non_terminals[start.0].name);
-        while self.name_to_non_terminal.contains_key(&augmented_start_name) {
+        while self
+            .name_to_non_terminal
+            .contains_key(&augmented_start_name)
+        {
             augmented_start_name.push('\'');
         }
         let augmented_start = self.add_non_terminal(augmented_start_name);
         // 添加扩展起始产生式
         self.add_production(augmented_start, [Symbol::N(start)]);
-        Ok(
-            Grammar{
-                terminals: self.terminals,
-                non_terminals: self.non_terminals,
-                productions: self.productions,
-                start,
-                augmented_start,
-                eof,
-            }
-        )
+        Ok(Grammar {
+            terminals: self.terminals,
+            non_terminals: self.non_terminals,
+            productions: self.productions,
+            start,
+            augmented_start,
+            eof,
+        })
     }
 }

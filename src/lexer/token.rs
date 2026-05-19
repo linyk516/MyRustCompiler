@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -15,18 +15,18 @@ pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
 }
+
 #[derive(Debug, PartialEq, Clone)]
-pub enum TokenKind{
-    Ident,      // 标识符
+pub enum TokenKind {
+    Ident, // 标识符
     Keyword(KeywordKind),
     Literal(LiteralKind),
-    Assign,     // 赋值 =
+    Assign, // 赋值 =
     Operator(OperatorKind),
     Delimiter(DelimiterKind),
     Separator(SeparatorKind),
     Special(SpecialKind),
-    Eof,        // 文件结束 #
-    Error,
+    Eof, // 文件结束 #
 }
 
 /// 关键字枚举类
@@ -70,24 +70,24 @@ impl KeywordKind {
 
 /// 字面值枚举类
 #[derive(Debug, PartialEq, Clone)]
-pub enum LiteralKind{
+pub enum LiteralKind {
     Int32,
 }
 
 /// 运算符号枚举类
 #[derive(Debug, PartialEq, Clone)]
 pub enum OperatorKind {
-    Plus,      // +
-    Minus,     // -
-    Star,      // *
-    Slash,     // /
-    EqEq,      // ==
-    Gt,        // >
-    Ge,        // >=
-    Lt,        // <
-    Le,        // <=
-    Ne,        // !=
-    Amp,       // &
+    Plus,  // +
+    Minus, // -
+    Star,  // *
+    Slash, // /
+    EqEq,  // ==
+    Gt,    // >
+    Ge,    // >=
+    Lt,    // <
+    Le,    // <=
+    Ne,    // !=
+    Amp,   // &
 }
 
 impl OperatorKind {
@@ -112,12 +112,12 @@ impl OperatorKind {
 /// 界符枚举类
 #[derive(Debug, PartialEq, Clone)]
 pub enum DelimiterKind {
-    LParen,    // (
-    RParen,    // )
-    LBrace,    // {
-    RBrace,    // }
-    LBracket,  // [
-    RBracket,  // ]
+    LParen,   // (
+    RParen,   // )
+    LBrace,   // {
+    RBrace,   // }
+    LBracket, // [
+    RBracket, // ]
 }
 
 impl DelimiterKind {
@@ -156,9 +156,9 @@ impl SeparatorKind {
 /// 特殊类型枚举类
 #[derive(Debug, PartialEq, Clone)]
 pub enum SpecialKind {
-    Arrow,     // ->
-    Dot,       // .
-    DotDot,    // ..
+    Arrow,  // ->
+    Dot,    // .
+    DotDot, // ..
 }
 
 impl SpecialKind {

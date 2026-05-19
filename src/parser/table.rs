@@ -1,21 +1,21 @@
-use std::collections::BTreeMap;
-use std::fs::File;
-use std::io::{Read, Write};
 use crate::parser::automaton::Automaton;
 use crate::parser::error::{ConflictAction, TableBuildError};
 use crate::parser::grammar::Grammar;
 use crate::parser::production::ProductionId;
 use crate::parser::state::StateID;
 use crate::parser::symbol::{NonTerminalId, Symbol, TerminalId};
-use serde::{Serialize, Deserialize};
-use serde_binary_adv::{Serializer, Deserializer};
+use serde::{Deserialize, Serialize};
+use serde_binary_adv::{Deserializer, Serializer};
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::{Read, Write};
 /// Action枚举项
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
-    Shift(StateID), // 移进状态
+    Shift(StateID),       // 移进状态
     Reduce(ProductionId), // 按照产生式进行规约
-    Accept, // 接受输入
-    // TODO: 可以添加更多的Action类型，例如错误处理等
+    Accept,               // 接受输入
+                          // TODO: 可以添加更多的Action类型，例如错误处理等
 }
 
 /// 语法分析表
@@ -33,6 +33,14 @@ impl ParseTable {
             Action::Reduce(production) => ConflictAction::Reduce(*production),
             Action::Accept => ConflictAction::Accept,
         }
+    }
+
+    pub fn get_expected(&self, state: &StateID) -> Vec<TerminalId> {
+        self.action
+            .keys()
+            .filter(|(s, _)| s == state)
+            .map(|(_, t)| t.clone())
+            .collect()
     }
 
     pub fn new() -> Self {
@@ -81,7 +89,7 @@ impl ParseTable {
                         incoming: incoming_action,
                     }),
                 }
-            },
+            }
         }
     }
 
@@ -172,4 +180,3 @@ impl ParseTable {
         Ok(deserialized)
     }
 }
-

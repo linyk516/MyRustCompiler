@@ -27,7 +27,6 @@ pub struct CSTTokenNode {
     pub span: Span,
 }
 
-
 impl CST {
     pub fn node(&self, id: CSTNodeID) -> &CSTNode {
         &self.nodes[id.0]

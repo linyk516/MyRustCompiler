@@ -1,11 +1,11 @@
-use std::fs::File;
-use std::io::{Read, Write};
-use serde::{Deserialize, Serialize};
-use serde_binary_adv::{Serializer, Deserializer};
 use crate::my_grammar::GrammarContext;
 use crate::parser::automaton::Automaton;
 use crate::parser::first::{FirstSets, NullableSet};
 use crate::parser::table::ParseTable;
+use serde::{Deserialize, Serialize};
+use serde_binary_adv::{Deserializer, Serializer};
+use std::fs::File;
+use std::io::{Read, Write};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrontendUtil {
@@ -22,7 +22,7 @@ impl FrontendUtil {
             .map_err(|err| format!("Failed to build automaton: {:?}", err))?;
         let parse_table = ParseTable::build_parse_table(g, &automaton)
             .map_err(|err| format!("Failed to build parse table: {:?}", err))?;
-        let front_end = Self{
+        let front_end = Self {
             grammar_ctx,
             parse_table,
         };

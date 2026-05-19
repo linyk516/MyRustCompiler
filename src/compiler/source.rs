@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use crate::lexer::token::Span;
+use std::path::{Path, PathBuf};
 
 pub struct SourceFile {
     pub path: Option<PathBuf>,
@@ -17,6 +17,7 @@ impl SourceFile {
         source.calc_line_start();
         source
     }
+
     pub fn with_path(path: impl Into<PathBuf>, text: impl Into<String>) -> Self {
         let mut source = SourceFile {
             path: Some(path.into()),
@@ -26,6 +27,7 @@ impl SourceFile {
         source.calc_line_start();
         source
     }
+
     pub fn from_path(path: impl Into<PathBuf>) -> std::io::Result<Self> {
         let path = path.into();
         let text = std::fs::read_to_string(&path)?;
@@ -57,6 +59,7 @@ impl SourceFile {
     pub fn slice(&self, span: Span) -> Option<&str> {
         span.text(self.text())
     }
+
     pub fn line_col(&self, byte_pos: usize) -> Option<(usize, usize)> {
         if byte_pos > self.text.len() {
             return None;
@@ -71,9 +74,36 @@ impl SourceFile {
         let col = byte_pos - self.line_starts[line];
         Some((line, col))
     }
+
+    pub fn line_utf8_col(&self, byte_pos: usize) -> Option<(usize, usize)> {
+        if byte_pos > self.text.len() {
+            return None;
+        }
+
+        if !self.text.is_char_boundary(byte_pos) {
+            return None;
+        }
+
+        let line = match self.line_starts.binary_search(&byte_pos) {
+            Ok(line) => line,
+            Err(0) => return None,
+            Err(next_line) => next_line - 1,
+        };
+
+        let line_start = self.line_starts[line];
+
+        let utf8_col = self.text.get(line_start..byte_pos)?.chars().count();
+
+        Some((line, utf8_col))
+    }
+
     pub fn line_text(&self, line: usize) -> Option<&str> {
         let line_start = self.line_starts.get(line)?;
-        let line_end = self.line_starts.get(line + 1).cloned().unwrap_or_else(|| self.text.len());
+        let line_end = self
+            .line_starts
+            .get(line + 1)
+            .cloned()
+            .unwrap_or_else(|| self.text.len());
         self.text.get(*line_start..line_end)
     }
 }

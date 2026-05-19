@@ -18,7 +18,7 @@ pub struct TerminalId(pub usize);
 
 /// 非终结符ID
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct  NonTerminalId(pub usize);
+pub struct NonTerminalId(pub usize);
 
 /// 一般文法符号
 /// 分为终结符和非终结符，并保存相应的唯一ID

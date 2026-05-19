@@ -38,11 +38,19 @@ pub enum TableBuildError {
     InvalidGrammar,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ParseError {
-    UnexpectedToken(Token),
+    UnexpectedToken {
+        // 记录当前分析状态，下一个字符和预期的字符
+        state: StateID,
+        lookahead: Option<Token>,
+        expected: Vec<TerminalId>,
+    },
     StackUnderflow,
     MissingProduction(ProductionId),
-    MissingAction,
-    MissingGoto,
+    MissingGoto {
+        // 记录当前分析状态和非终结符
+        state: StateID,
+        non_terminal: NonTerminalId,
+    },
 }
