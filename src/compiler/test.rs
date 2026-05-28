@@ -241,6 +241,20 @@ fn cli_renderer_prints_token_table_when_enabled() {
 }
 
 #[test]
+fn cli_renderer_prints_ast_when_enabled() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() {}");
+    let outcome = compiler.compile(source);
+    let renderer = CliRenderer::new(RenderConfig::new(false).with_show_ast(true));
+
+    let rendered = renderer.render_outcome(&compiler, &outcome);
+
+    assert!(rendered.stdout.contains("AST"));
+    assert!(rendered.stdout.contains("Program"));
+    assert!(rendered.stdout.contains("Fn main"));
+}
+
+#[test]
 fn cli_renderer_can_color_diagnostics_when_enabled() {
     let compiler = Compiler::build(false).expect("compiler should build");
     let source = SourceFile::new("fn main() {@}");

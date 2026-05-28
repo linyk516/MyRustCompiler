@@ -1,5 +1,5 @@
 pub(crate) mod automaton;
-mod cst;
+pub(crate) mod cst;
 pub(crate) mod engine;
 pub(crate) mod error;
 pub(crate) mod first;
@@ -13,7 +13,9 @@ pub(crate) mod table;
 
 pub use cst::CST;
 pub use fmt::{CSTDisplay, CstSpanDisplayMode};
+pub(crate) use production::ProductionId;
 
+#[derive(Debug, Clone)]
 pub struct ParseResult {
     pub cst: CST,
 }

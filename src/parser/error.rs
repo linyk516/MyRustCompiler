@@ -3,6 +3,7 @@ use crate::parser::production::ProductionId;
 use crate::parser::state::StateID;
 use crate::parser::symbol::{NonTerminalId, TerminalId};
 
+#[allow(dead_code)]
 pub enum GrammarError {
     UndefinedSymbol,
     InvalidStartSymbol,

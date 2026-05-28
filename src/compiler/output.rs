@@ -1,19 +1,23 @@
+use crate::ast::ty::Program;
 use crate::compiler::diagnostic::{Diagnostic, Severity};
 use crate::compiler::source::SourceFile;
 use crate::lexer::token::Token;
 use crate::my_grammar::GrammarContext;
 use crate::parser::{CST, CSTDisplay, CstSpanDisplayMode, ParseResult};
 
+#[derive(Debug, Clone)]
 pub struct CompileOutput {
     pub tokens: Vec<Token>,
     pub parse_result: ParseResult,
+    pub ast: Option<Program>,
 }
 
 impl CompileOutput {
-    pub fn new(tokens: Vec<Token>, parse_result: ParseResult) -> Self {
+    pub fn new(tokens: Vec<Token>, parse_result: ParseResult, ast: Option<Program>) -> Self {
         Self {
             tokens,
             parse_result,
+            ast,
         }
     }
 
@@ -27,6 +31,10 @@ impl CompileOutput {
 
     pub fn cst(&self) -> &CST {
         &self.parse_result.cst
+    }
+
+    pub fn ast(&self) -> Option<&Program> {
+        self.ast.as_ref()
     }
 
     pub fn display_cst<'a>(

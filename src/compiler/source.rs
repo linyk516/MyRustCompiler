@@ -1,6 +1,7 @@
 use crate::lexer::token::Span;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone)]
 pub struct SourceFile {
     pub path: Option<PathBuf>,
     pub text: String,

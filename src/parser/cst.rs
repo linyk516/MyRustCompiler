@@ -2,11 +2,13 @@ use crate::lexer::token::Span;
 use crate::parser::production::ProductionId;
 use crate::parser::symbol::{NonTerminalId, TerminalId};
 
+#[derive(Debug, Clone)]
 pub struct CST {
     pub nodes: Vec<CSTNode>,
     pub root: CSTNodeID,
 }
 
+#[derive(Debug, Clone)]
 pub enum CSTNode {
     Rule(CSTRuleNode),
     Token(CSTTokenNode),
@@ -15,6 +17,7 @@ pub enum CSTNode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CSTNodeID(pub usize);
 
+#[derive(Debug, Clone)]
 pub struct CSTRuleNode {
     pub lhs: NonTerminalId,
     pub production: ProductionId,
@@ -22,6 +25,7 @@ pub struct CSTRuleNode {
     pub span: Span,
 }
 
+#[derive(Debug, Clone)]
 pub struct CSTTokenNode {
     pub token: TerminalId,
     pub span: Span,

@@ -22,6 +22,7 @@ impl<'a> ParserEngine<'a> {
         ParserEngine { table, ctx }
     }
 
+    #[allow(dead_code)]
     pub fn parse(
         &self,
         token_iter: impl Iterator<Item = Token>,

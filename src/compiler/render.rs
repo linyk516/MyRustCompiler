@@ -40,6 +40,7 @@ pub struct RenderConfig {
     pub show_notes: bool,
     pub show_help: bool,
     pub show_tokens: bool,
+    pub show_ast: bool,
     pub color: bool,
 }
 
@@ -50,12 +51,18 @@ impl RenderConfig {
             show_notes: true,
             show_help: true,
             show_tokens: false,
+            show_ast: false,
             color: false,
         }
     }
 
     pub fn with_show_tokens(mut self, show_tokens: bool) -> Self {
         self.show_tokens = show_tokens;
+        self
+    }
+
+    pub fn with_show_ast(mut self, show_ast: bool) -> Self {
+        self.show_ast = show_ast;
         self
     }
 
@@ -92,6 +99,9 @@ impl CliRenderer {
             if self.config.show_tokens {
                 self.render_tokens(&mut stdout, output, &outcome.source);
             }
+            if self.config.show_ast {
+                self.render_ast(&mut stdout, output);
+            }
             if self.config.verbose {
                 let cst = compiler.display_cst_with_mode(
                     output,
@@ -122,10 +132,30 @@ impl CliRenderer {
         let _ = writeln!(out, "{}", title);
         let _ = writeln!(out);
         let _ = writeln!(out, "{:<12}{}", "File", self.source_name(&outcome.source));
-        let _ = writeln!(out, "{:<12}{}", "Stage", "lexer + parser");
+        let stage = if output.ast().is_some() {
+            "lexer + parser + lower"
+        } else {
+            "lexer + parser"
+        };
+        let _ = writeln!(out, "{:<12}{}", "Stage", stage);
         let _ = writeln!(out, "{:<12}{}", "Tokens", output.tokens().len());
         let _ = writeln!(out, "{:<12}{}", "CST nodes", output.cst().nodes.len());
         let _ = writeln!(out, "{:<12}{}", "Diagnostics", outcome.diagnostics.len());
+    }
+
+    fn render_ast(&self, out: &mut String, output: &CompileOutput) {
+        let _ = writeln!(out);
+        let _ = writeln!(out, "AST");
+        let _ = writeln!(out);
+
+        match output.ast() {
+            Some(ast) => {
+                let _ = write!(out, "{}", ast);
+            }
+            None => {
+                let _ = writeln!(out, "<not available>");
+            }
+        }
     }
 
     fn render_tokens(&self, out: &mut String, output: &CompileOutput, source: &SourceFile) {

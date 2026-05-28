@@ -1,5 +1,6 @@
+use crate::parser::ProductionId;
 use crate::parser::grammar::{Grammar, GrammarBuilder, GrammarBuilderErr};
-use crate::parser::symbol::TerminalId;
+use crate::parser::symbol::{NonTerminalId, Symbol, TerminalId};
 use serde::{Deserialize, Serialize};
 /// 方便转换为Symbol，避免into调用过于冗长
 
@@ -53,10 +54,150 @@ pub struct Terminals {
     pub eof: TerminalId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ProdTag {
+    VarAttrMut,
+    TyI32,
+    LValAddr,
+    AddrAddrElem,
+    AddrElemIdent,
+    ProgramDeclList,
+    DeclListEmpty,
+    DeclListDeclDeclList,
+    DeclFnDecl,
+    FnDeclSigBlock,
+    FnSigNoRet,
+    ParamListEmpty,
+    BlockStmtList,
+    StmtListEmpty,
+    StmtListStmtStmtList,
+    StmtEmpty,
+    StmtReturn,
+    ReturnStmtEmpty,
+    ParamListParam,
+    ParamListParamList,
+    ParamVarAttrIdentTy,
+    FnSigRetTy,
+    ReturnStmtExpr,
+    VarDeclNoTy,
+    VarDeclWithTy,
+    StmtVarDecl,
+    VarDeclStmt,
+    StmtAssign,
+    AssignStmt,
+    StmtVarInit,
+    VarInitStmt,
+    StmtExpr,
+    ExprAdd,
+    AddExprTerm,
+    TermFactor,
+    FactorNum,
+    NumLiteralI32,
+    FactorLVal,
+    FactorGroupedExpr,
+    ExprCmp,
+    CmpOpLt,
+    CmpOpLe,
+    CmpOpGt,
+    CmpOpGe,
+    CmpOpEq,
+    CmpOpNe,
+    AddExprBinary,
+    AddOpPlus,
+    AddOpMinus,
+    TermBinary,
+    MulOpStar,
+    MulOpSlash,
+    FactorCall,
+    ArgListEmpty,
+    ArgListExpr,
+    ArgListExprList,
+    StmtIf,
+    IfStmt,
+    ElsePartEmpty,
+    ElsePartBlock,
+    ElsePartIf,
+    StmtLoop,
+    LoopStmtWhile,
+    WhileStmt,
+    LoopStmtFor,
+    ForStmt,
+    RangeExpr,
+    LoopStmtInfinite,
+    InfiniteLoopStmt,
+    StmtBreak,
+    StmtContinue,
+    VarAttrEmpty,
+    TyRef,
+    AddrRef,
+    TyRefMut,
+    AddrRefMut,
+    LValDeref,
+    BlockExpr,
+    BlockExprBodyExpr,
+    BlockExprBodyStmt,
+    AddrElemBlockExpr,
+    FnDeclSigBlockExpr,
+    AddrElemBranchExpr,
+    BranchExpr,
+    AddrElemLoopExpr,
+    LoopExpr,
+    StmtBreakExpr,
+    TyArray,
+    AddrElemArray,
+    ArrayElemListEmpty,
+    ArrayElemListExpr,
+    ArrayElemListExprList,
+    IterExpr,
+    AddrElemIndex,
+    TyTuple,
+    TupleTyInnerEmpty,
+    TupleTyInnerTy,
+    TyListEmpty,
+    TyListTy,
+    TyListTyList,
+    AddrElemTuple,
+    TupleExprInnerEmpty,
+    TupleExprInnerExpr,
+    TupleElemListEmpty,
+    TupleElemListExpr,
+    TupleElemListExprList,
+    AddrElemField,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrammarContext {
     pub grammar: Grammar,
     pub terminals: Terminals,
+    pub prod_tags: Vec<Option<ProdTag>>,
+}
+
+impl GrammarContext {
+    pub fn prod_tag(&self, id: ProductionId) -> Option<ProdTag> {
+        self.prod_tags.get(id.0).copied().flatten()
+    }
+
+    pub fn has_prod_tag(&self, id: ProductionId, tag: ProdTag) -> bool {
+        self.prod_tag(id) == Some(tag)
+    }
+}
+
+fn add_tagged_prod<I>(
+    g: &mut GrammarBuilder,
+    prod_tags: &mut Vec<Option<ProdTag>>,
+    lhs: NonTerminalId,
+    rhs: I,
+    tag: ProdTag,
+) -> ProductionId
+where
+    I: IntoIterator<Item = Symbol>,
+{
+    let id = g.add_production(lhs, rhs);
+    if prod_tags.len() <= id.0 {
+        prod_tags.resize(id.0 + 1, None);
+    }
+    prod_tags[id.0] = Some(tag);
+    id
 }
 
 pub fn generate_my_grammar_context() -> Option<GrammarContext> {
@@ -69,12 +210,14 @@ pub fn generate_my_grammar_context() -> Option<GrammarContext> {
     }
 }
 
+#[allow(dead_code)]
 pub fn generate_my_grammar() -> Option<Grammar> {
     generate_my_grammar_context().map(|context| context.grammar)
 }
 
 fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     let mut g = GrammarBuilder::new();
+    let mut prod_tags = Vec::new();
 
     // 关键字
     let i32_ = g.add_terminal("i32");
@@ -149,16 +292,35 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     let addr = g.add_non_terminal("addr");
     let addr_elem = g.add_non_terminal("addr_elem");
 
-    g.add_production(var_attr, rhs!(mut_));
-    g.add_production(ty, rhs!(i32_));
-    g.add_production(l_val, rhs!(addr));
-    g.add_production(addr, rhs!(addr_elem));
-    g.add_production(addr_elem, rhs!(ident));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        var_attr,
+        rhs!(mut_),
+        ProdTag::VarAttrMut,
+    );
+    add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(i32_), ProdTag::TyI32);
+    add_tagged_prod(&mut g, &mut prod_tags, l_val, rhs!(addr), ProdTag::LValAddr);
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        addr,
+        rhs!(addr_elem),
+        ProdTag::AddrAddrElem,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        addr_elem,
+        rhs!(ident),
+        ProdTag::AddrElemIdent,
+    );
 
     /*
        Part1
        1.1 基础程序
-       Program -> <声明串＞＜声明串>->空|＜声明><声明串>
+       Program -> <声明串＞
+       ＜声明串>->空|＜声明><声明串>
        ＜声明>->＜函数声明＞
        ＜函数声明>->＜函数头声明><语句块＞
        ＜函数头声明>->fn <ID>'('<形参列表>')'
@@ -175,15 +337,69 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     let block = g.add_non_terminal("block");
     let stmt_list = g.add_non_terminal("stmt_list");
 
-    g.add_production(program, rhs!(decl_list));
-    g.add_production(decl_list, rhs!());
-    g.add_production(decl_list, rhs!(decl, decl_list));
-    g.add_production(decl, rhs!(fn_decl));
-    g.add_production(fn_decl, rhs!(fn_sig, block));
-    g.add_production(fn_sig, rhs!(fn_, ident, l_paren, param_list, r_paren));
-    g.add_production(param_list, rhs!());
-    g.add_production(block, rhs!(l_bracket, stmt_list, r_bracket));
-    g.add_production(stmt_list, rhs!());
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        program,
+        rhs!(decl_list),
+        ProdTag::ProgramDeclList,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        decl_list,
+        rhs!(),
+        ProdTag::DeclListEmpty,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        decl_list,
+        rhs!(decl, decl_list),
+        ProdTag::DeclListDeclDeclList,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        decl,
+        rhs!(fn_decl),
+        ProdTag::DeclFnDecl,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        fn_decl,
+        rhs!(fn_sig, block),
+        ProdTag::FnDeclSigBlock,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        fn_sig,
+        rhs!(fn_, ident, l_paren, param_list, r_paren),
+        ProdTag::FnSigNoRet,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        param_list,
+        rhs!(),
+        ProdTag::ParamListEmpty,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        block,
+        rhs!(l_bracket, stmt_list, r_bracket),
+        ProdTag::BlockStmtList,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        stmt_list,
+        rhs!(),
+        ProdTag::StmtListEmpty,
+    );
 
     /*
        1.2 语句（拓展1.1）
@@ -191,8 +407,20 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <语句>-> ';'
     */
     let stmt = g.add_non_terminal("stmt");
-    g.add_production(stmt_list, rhs!(stmt, stmt_list));
-    g.add_production(stmt, rhs!(semicolon));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        stmt_list,
+        rhs!(stmt, stmt_list),
+        ProdTag::StmtListStmtStmtList,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        stmt,
+        rhs!(semicolon),
+        ProdTag::StmtEmpty,
+    );
 
     /*
        1.3 返回语句（拓展1.2）
@@ -200,8 +428,20 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <返回语句>-> return ';'
     */
     let return_stmt = g.add_non_terminal("return_stmt");
-    g.add_production(stmt, rhs!(return_stmt));
-    g.add_production(return_stmt, rhs!(return_, semicolon));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        stmt,
+        rhs!(return_stmt),
+        ProdTag::StmtReturn,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        return_stmt,
+        rhs!(return_, semicolon),
+        ProdTag::ReturnStmtEmpty,
+    );
 
     /*
        1.4 函数输入（依赖0.1、0.2，拓展1.1）
@@ -209,9 +449,27 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <形参> -> <变量属性> <ID> ':' <类型>
     */
     let param = g.add_non_terminal("param");
-    g.add_production(param_list, rhs!(param));
-    g.add_production(param_list, rhs!(param, comma, param_list));
-    g.add_production(param, rhs!(var_attr, ident, colon, ty));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        param_list,
+        rhs!(param),
+        ProdTag::ParamListParam,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        param_list,
+        rhs!(param, comma, param_list),
+        ProdTag::ParamListParamList,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        param,
+        rhs!(var_attr, ident, colon, ty),
+        ProdTag::ParamVarAttrIdentTy,
+    );
 
     /*
        1.5 函数输出（依赖0.2、3.1，拓展1.1、1.3）
@@ -219,11 +477,20 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <返回语句> -> return <表达式> ';'
     */
     let expr = g.add_non_terminal("expr");
-    g.add_production(
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
         fn_sig,
         rhs!(fn_, ident, l_paren, param_list, r_paren, arrow, ty),
+        ProdTag::FnSigRetTy,
     );
-    g.add_production(return_stmt, rhs!(return_, expr, semicolon));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        return_stmt,
+        rhs!(return_, expr, semicolon),
+        ProdTag::ReturnStmtExpr,
+    );
 
     /*
        Part2
@@ -232,8 +499,20 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <变量声明> -> <变量属性> <ID> ':' <类型>
     */
     let var_decl = g.add_non_terminal("var_decl");
-    g.add_production(var_decl, rhs!(var_attr, ident));
-    g.add_production(var_decl, rhs!(var_attr, ident, colon, ty));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        var_decl,
+        rhs!(var_attr, ident),
+        ProdTag::VarDeclNoTy,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        var_decl,
+        rhs!(var_attr, ident, colon, ty),
+        ProdTag::VarDeclWithTy,
+    );
 
     /*
        2.1 变量声明语句（依赖2.0，拓展1.2）
@@ -241,8 +520,20 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <变量声明语句> -> let <变量声明> ';'
     */
     let var_decl_stmt = g.add_non_terminal("var_decl_stmt");
-    g.add_production(stmt, rhs!(var_decl_stmt));
-    g.add_production(var_decl_stmt, rhs!(let_, var_decl, semicolon));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        stmt,
+        rhs!(var_decl_stmt),
+        ProdTag::StmtVarDecl,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        var_decl_stmt,
+        rhs!(let_, var_decl, semicolon),
+        ProdTag::VarDeclStmt,
+    );
 
     /*
        2.2 赋值语句（依赖0.3、3.1，拓展1.2）
@@ -250,8 +541,20 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <赋值语句> -> <左值> '=' <表达式> ';'
     */
     let assign_stmt = g.add_non_terminal("assign_stmt");
-    g.add_production(stmt, rhs!(assign_stmt));
-    g.add_production(assign_stmt, rhs!(l_val, assignment, expr, semicolon));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        stmt,
+        rhs!(assign_stmt),
+        ProdTag::StmtAssign,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        assign_stmt,
+        rhs!(l_val, assignment, expr, semicolon),
+        ProdTag::AssignStmt,
+    );
 
     /*
        2.3 变量声明赋值语句（依赖2.0、3.1、拓展1.2）
@@ -259,10 +562,19 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <变量声明赋值语句> -> let <变量声明> '=' <表达式> ';'
     */
     let var_init_stmt = g.add_non_terminal("var_init_stmt");
-    g.add_production(stmt, rhs!(var_init_stmt));
-    g.add_production(
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        stmt,
+        rhs!(var_init_stmt),
+        ProdTag::StmtVarInit,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
         var_init_stmt,
         rhs!(let_, var_decl, assignment, expr, semicolon),
+        ProdTag::VarInitStmt,
     );
 
     /*
@@ -278,14 +590,62 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     let term = g.add_non_terminal("term");
     let factor = g.add_non_terminal("factor");
     let num = g.add_non_terminal("num");
-    g.add_production(stmt, rhs!(expr, semicolon));
-    g.add_production(expr, rhs!(add_expr));
-    g.add_production(add_expr, rhs!(term));
-    g.add_production(term, rhs!(factor));
-    g.add_production(factor, rhs!(num));
-    g.add_production(num, rhs!(literal_i32));
-    g.add_production(factor, rhs!(l_val));
-    g.add_production(factor, rhs!(l_paren, expr, r_paren));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        stmt,
+        rhs!(expr, semicolon),
+        ProdTag::StmtExpr,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        expr,
+        rhs!(add_expr),
+        ProdTag::ExprAdd,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        add_expr,
+        rhs!(term),
+        ProdTag::AddExprTerm,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        term,
+        rhs!(factor),
+        ProdTag::TermFactor,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        factor,
+        rhs!(num),
+        ProdTag::FactorNum,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        num,
+        rhs!(literal_i32),
+        ProdTag::NumLiteralI32,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        factor,
+        rhs!(l_val),
+        ProdTag::FactorLVal,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        factor,
+        rhs!(l_paren, expr, r_paren),
+        ProdTag::FactorGroupedExpr,
+    );
 
     /*
        3.2 增加比较运算（依赖3.1、拓展3.1）
@@ -293,13 +653,19 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <比较运算符> -> '<' | '<=' | '>' | '>=' | '==' | '!=‘
     */
     let cmp_op = g.add_non_terminal("cmp_op");
-    g.add_production(expr, rhs!(expr, cmp_op, add_expr));
-    g.add_production(cmp_op, rhs!(lt));
-    g.add_production(cmp_op, rhs!(le));
-    g.add_production(cmp_op, rhs!(gt));
-    g.add_production(cmp_op, rhs!(ge));
-    g.add_production(cmp_op, rhs!(eqeq));
-    g.add_production(cmp_op, rhs!(ne));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        expr,
+        rhs!(expr, cmp_op, add_expr),
+        ProdTag::ExprCmp,
+    );
+    add_tagged_prod(&mut g, &mut prod_tags, cmp_op, rhs!(lt), ProdTag::CmpOpLt);
+    add_tagged_prod(&mut g, &mut prod_tags, cmp_op, rhs!(le), ProdTag::CmpOpLe);
+    add_tagged_prod(&mut g, &mut prod_tags, cmp_op, rhs!(gt), ProdTag::CmpOpGt);
+    add_tagged_prod(&mut g, &mut prod_tags, cmp_op, rhs!(ge), ProdTag::CmpOpGe);
+    add_tagged_prod(&mut g, &mut prod_tags, cmp_op, rhs!(eqeq), ProdTag::CmpOpEq);
+    add_tagged_prod(&mut g, &mut prod_tags, cmp_op, rhs!(ne), ProdTag::CmpOpNe);
 
     /*
        3.3 增加加减运算（依赖3.1、拓展3.1）
@@ -307,9 +673,27 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <加减运算符> -> '+' | '-
     */
     let add_op = g.add_non_terminal("add_op");
-    g.add_production(add_expr, rhs!(add_expr, add_op, term));
-    g.add_production(add_op, rhs!(plus));
-    g.add_production(add_op, rhs!(minus));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        add_expr,
+        rhs!(add_expr, add_op, term),
+        ProdTag::AddExprBinary,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        add_op,
+        rhs!(plus),
+        ProdTag::AddOpPlus,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        add_op,
+        rhs!(minus),
+        ProdTag::AddOpMinus,
+    );
 
     /*
        3.4 增加乘除运算（依赖3.1、拓展3.1）
@@ -317,9 +701,27 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <乘除运算符> -> '*' | '/’
     */
     let mul_op = g.add_non_terminal("mul_op");
-    g.add_production(term, rhs!(term, mul_op, factor));
-    g.add_production(mul_op, rhs!(star));
-    g.add_production(mul_op, rhs!(slash));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        term,
+        rhs!(term, mul_op, factor),
+        ProdTag::TermBinary,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        mul_op,
+        rhs!(star),
+        ProdTag::MulOpStar,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        mul_op,
+        rhs!(slash),
+        ProdTag::MulOpSlash,
+    );
 
     /*
        3.5 增加函数调用（依赖3.1、拓展3.1）
@@ -327,10 +729,34 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <实参列表>-> 空 | <表达式> | <表达式> ',' <实参列表>
     */
     let arg_list = g.add_non_terminal("arg_list");
-    g.add_production(factor, rhs!(ident, l_paren, arg_list, r_paren));
-    g.add_production(arg_list, rhs!());
-    g.add_production(arg_list, rhs!(expr));
-    g.add_production(arg_list, rhs!(expr, comma, arg_list));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        factor,
+        rhs!(ident, l_paren, arg_list, r_paren),
+        ProdTag::FactorCall,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        arg_list,
+        rhs!(),
+        ProdTag::ArgListEmpty,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        arg_list,
+        rhs!(expr),
+        ProdTag::ArgListExpr,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        arg_list,
+        rhs!(expr, comma, arg_list),
+        ProdTag::ArgListExprList,
+    );
 
     /*
        Part4
@@ -341,21 +767,45 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     */
     let if_stmt = g.add_non_terminal("if_stmt");
     let else_part = g.add_non_terminal("else_part");
-    g.add_production(stmt, rhs!(if_stmt));
-    g.add_production(if_stmt, rhs!(if_, expr, block, else_part));
-    g.add_production(else_part, rhs!());
+    add_tagged_prod(&mut g, &mut prod_tags, stmt, rhs!(if_stmt), ProdTag::StmtIf);
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        if_stmt,
+        rhs!(if_, expr, block, else_part),
+        ProdTag::IfStmt,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        else_part,
+        rhs!(),
+        ProdTag::ElsePartEmpty,
+    );
 
     /*
        4.2 增加else（依赖1.1，拓展4.1）
        <else部分> -> else <语句块>
     */
-    g.add_production(else_part, rhs!(else_, block));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        else_part,
+        rhs!(else_, block),
+        ProdTag::ElsePartBlock,
+    );
 
     /*
        4.3 增加else if（依赖1.1，拓展4.1）
        <else部分> -> else if <表达式> <语句块> <else部分>
     */
-    g.add_production(else_part, rhs!(else_, if_, expr, block, else_part));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        else_part,
+        rhs!(else_, if_, expr, block, else_part),
+        ProdTag::ElsePartIf,
+    );
 
     /*
        Part5
@@ -363,7 +813,13 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <语句> -> <循环语句>
     */
     let loop_stmt = g.add_non_terminal("loop_stmt");
-    g.add_production(stmt, rhs!(loop_stmt));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        stmt,
+        rhs!(loop_stmt),
+        ProdTag::StmtLoop,
+    );
 
     /*
        5.1 while循环（依赖1.1、3.1，拓展5.0）
@@ -371,8 +827,20 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <while语句> -> while <表达式> <语句块>
     */
     let while_stmt = g.add_non_terminal("while_stmt");
-    g.add_production(loop_stmt, rhs!(while_stmt));
-    g.add_production(while_stmt, rhs!(while_, expr, block));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        loop_stmt,
+        rhs!(while_stmt),
+        ProdTag::LoopStmtWhile,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        while_stmt,
+        rhs!(while_, expr, block),
+        ProdTag::WhileStmt,
+    );
 
     /*
        5.2 for循环（依赖1.1、2.0、3.1，拓展5.0）
@@ -382,9 +850,27 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     */
     let for_stmt = g.add_non_terminal("for_stmt");
     let range_expr = g.add_non_terminal("range_expr");
-    g.add_production(loop_stmt, rhs!(for_stmt));
-    g.add_production(for_stmt, rhs!(for_, var_decl, in_, range_expr, block));
-    g.add_production(range_expr, rhs!(expr, dotdot, expr));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        loop_stmt,
+        rhs!(for_stmt),
+        ProdTag::LoopStmtFor,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        for_stmt,
+        rhs!(for_, var_decl, in_, range_expr, block),
+        ProdTag::ForStmt,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        range_expr,
+        rhs!(expr, dotdot, expr),
+        ProdTag::RangeExpr,
+    );
 
     /*
        5.3 loop循环（依赖1.1，拓展5.0）
@@ -392,44 +878,98 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <loop语句> -> loop <语句块> # 修改：与loop表达式分离
     */
     let infinite_loop_stmt = g.add_non_terminal("infinite_loop_stmt");
-    g.add_production(loop_stmt, rhs!(infinite_loop_stmt));
-    g.add_production(infinite_loop_stmt, rhs!(loop_, block));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        loop_stmt,
+        rhs!(infinite_loop_stmt),
+        ProdTag::LoopStmtInfinite,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        infinite_loop_stmt,
+        rhs!(loop_, block),
+        ProdTag::InfiniteLoopStmt,
+    );
 
     /*
        5.4 增加break和continue（拓展1.2）
        <语句> -> break ';' | continue ';'
     */
-    g.add_production(stmt, rhs!(break_, semicolon));
-    g.add_production(stmt, rhs!(continue_, semicolon));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        stmt,
+        rhs!(break_, semicolon),
+        ProdTag::StmtBreak,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        stmt,
+        rhs!(continue_, semicolon),
+        ProdTag::StmtContinue,
+    );
 
     /*
        Part6
        6.1 变量不可变属性（拓展0.1）
        <变量属性> -> 空
     */
-    g.add_production(var_attr, rhs!());
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        var_attr,
+        rhs!(),
+        ProdTag::VarAttrEmpty,
+    );
 
     /*
        6.2 不可变引用（依赖0.2、0.3，拓展0.2、0.3）
        <类型> -> '&' <类型>
        <可取引用> -> '&' <可取引用>
     */
-    g.add_production(ty, rhs!(amp, ty));
-    g.add_production(addr, rhs!(amp, addr));
+    add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(amp, ty), ProdTag::TyRef);
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        addr,
+        rhs!(amp, addr),
+        ProdTag::AddrRef,
+    );
 
     /*
        6.3 可变引用（依赖0.2、0.3，拓展0.2、0.3）
        <类型> -> '&' mut <类型>
        <可取引用> -> '&' mut <可取引用>
     */
-    g.add_production(ty, rhs!(amp, mut_, ty));
-    g.add_production(addr, rhs!(amp, mut_, addr));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        ty,
+        rhs!(amp, mut_, ty),
+        ProdTag::TyRefMut,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        addr,
+        rhs!(amp, mut_, addr),
+        ProdTag::AddrRefMut,
+    );
 
     /*
        6.4 借用（依赖0.3、拓展0.3）
        <左值> -> '*' <左值>
     */
-    g.add_production(l_val, rhs!(star, l_val));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        l_val,
+        rhs!(star, l_val),
+        ProdTag::LValDeref,
+    );
 
     /*
        Part7
@@ -439,21 +979,51 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     */
     let block_expr = g.add_non_terminal("block_expr");
     let block_expr_body = g.add_non_terminal("block_expr_body");
-    g.add_production(block_expr, rhs!(l_bracket, block_expr_body, r_bracket));
-    g.add_production(block_expr_body, rhs!(expr));
-    g.add_production(block_expr_body, rhs!(stmt, block_expr_body));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        block_expr,
+        rhs!(l_bracket, block_expr_body, r_bracket),
+        ProdTag::BlockExpr,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        block_expr_body,
+        rhs!(expr),
+        ProdTag::BlockExprBodyExpr,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        block_expr_body,
+        rhs!(stmt, block_expr_body),
+        ProdTag::BlockExprBodyStmt,
+    );
 
     /*
        7.1 函数表达式块作为表达式（依赖7.0、拓展0.3）
        <可取元素> -> <函数表达式语句块>
     */
-    g.add_production(addr_elem, rhs!(block_expr));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        addr_elem,
+        rhs!(block_expr),
+        ProdTag::AddrElemBlockExpr,
+    );
 
     /*
        7.2 函数表达式块作为函数体（依赖1.1、7.0 ，拓展1.1）
        <函数声明> -> <函数头声明> <函数表达式语句块>
     */
-    g.add_production(fn_decl, rhs!(fn_sig, block_expr));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        fn_decl,
+        rhs!(fn_sig, block_expr),
+        ProdTag::FnDeclSigBlockExpr,
+    );
 
     /*
        7.3 选择表达式（依赖3.1、7.0，拓展0.3）
@@ -461,8 +1031,20 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <选择表达式>-> if <表达式> <函数表达式语句块> else <函数表达式语句块>
     */
     let branch_expr = g.add_non_terminal("branch_expr");
-    g.add_production(addr_elem, rhs!(branch_expr));
-    g.add_production(branch_expr, rhs!(if_, expr, block_expr, else_, block_expr));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        addr_elem,
+        rhs!(branch_expr),
+        ProdTag::AddrElemBranchExpr,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        branch_expr,
+        rhs!(if_, expr, block_expr, else_, block_expr),
+        ProdTag::BranchExpr,
+    );
 
     /*
        7.4 循环表达式（依赖3.1、7.0，拓展0.3） # 修改
@@ -471,16 +1053,40 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <语句> -> break <表达式> ';' # 修改：为loop表达式提供值
     */
     let loop_expr = g.add_non_terminal("loop_expr");
-    g.add_production(addr_elem, rhs!(loop_expr));
-    g.add_production(loop_expr, rhs!(loop_, block_expr));
-    g.add_production(stmt, rhs!(break_, expr, semicolon));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        addr_elem,
+        rhs!(loop_expr),
+        ProdTag::AddrElemLoopExpr,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        loop_expr,
+        rhs!(loop_, block_expr),
+        ProdTag::LoopExpr,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        stmt,
+        rhs!(break_, expr, semicolon),
+        ProdTag::StmtBreakExpr,
+    );
 
     /*
        Part8
        8.1 数组类型（依赖0.2，拓展0.2）
        <类型> -> '[' <类型> ';' <NUM>’]‘
     */
-    g.add_production(ty, rhs!(l_brace, ty, semicolon, num, r_brace));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        ty,
+        rhs!(l_brace, ty, semicolon, num, r_brace),
+        ProdTag::TyArray,
+    );
 
     /*
        8.2 数组表达式（依赖3.1，拓展0.3、5.2）
@@ -490,17 +1096,53 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     */
     let array_elem_list = g.add_non_terminal("array_elem_list");
     let iter_expr = g.add_non_terminal("iter_expr");
-    g.add_production(addr_elem, rhs!(l_brace, array_elem_list, r_brace));
-    g.add_production(array_elem_list, rhs!());
-    g.add_production(array_elem_list, rhs!(expr));
-    g.add_production(array_elem_list, rhs!(expr, comma, array_elem_list));
-    g.add_production(iter_expr, rhs!(expr));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        addr_elem,
+        rhs!(l_brace, array_elem_list, r_brace),
+        ProdTag::AddrElemArray,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        array_elem_list,
+        rhs!(),
+        ProdTag::ArrayElemListEmpty,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        array_elem_list,
+        rhs!(expr),
+        ProdTag::ArrayElemListExpr,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        array_elem_list,
+        rhs!(expr, comma, array_elem_list),
+        ProdTag::ArrayElemListExprList,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        iter_expr,
+        rhs!(expr),
+        ProdTag::IterExpr,
+    );
 
     /*
        8.3 数组元素（依赖0.3、3.1，拓展0.3）
        <可取元素> -> <可取元素> '[' <表达式> ']'
     */
-    g.add_production(addr_elem, rhs!(addr_elem, l_brace, expr, r_brace));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        addr_elem,
+        rhs!(addr_elem, l_brace, expr, r_brace),
+        ProdTag::AddrElemIndex,
+    );
 
     /*
        Part9
@@ -511,12 +1153,42 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     */
     let tuple_ty_inner = g.add_non_terminal("tuple_ty_inner");
     let ty_list = g.add_non_terminal("ty_list");
-    g.add_production(ty, rhs!(l_paren, tuple_ty_inner, r_paren));
-    g.add_production(tuple_ty_inner, rhs!());
-    g.add_production(tuple_ty_inner, rhs!(ty, comma, ty_list));
-    g.add_production(ty_list, rhs!());
-    g.add_production(ty_list, rhs!(ty));
-    g.add_production(ty_list, rhs!(ty, comma, ty_list));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        ty,
+        rhs!(l_paren, tuple_ty_inner, r_paren),
+        ProdTag::TyTuple,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        tuple_ty_inner,
+        rhs!(),
+        ProdTag::TupleTyInnerEmpty,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        tuple_ty_inner,
+        rhs!(ty, comma, ty_list),
+        ProdTag::TupleTyInnerTy,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        ty_list,
+        rhs!(),
+        ProdTag::TyListEmpty,
+    );
+    add_tagged_prod(&mut g, &mut prod_tags, ty_list, rhs!(ty), ProdTag::TyListTy);
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        ty_list,
+        rhs!(ty, comma, ty_list),
+        ProdTag::TyListTyList,
+    );
 
     /*
        9.2 元组表达式（依赖3.1、拓展0.3）
@@ -526,18 +1198,60 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     */
     let tuple_expr_inner = g.add_non_terminal("tuple_expr_inner");
     let tuple_elem_list = g.add_non_terminal("tuple_elem_list");
-    g.add_production(addr_elem, rhs!(l_paren, tuple_expr_inner, r_paren));
-    g.add_production(tuple_expr_inner, rhs!());
-    g.add_production(tuple_expr_inner, rhs!(expr, comma, tuple_elem_list));
-    g.add_production(tuple_elem_list, rhs!());
-    g.add_production(tuple_elem_list, rhs!(expr));
-    g.add_production(tuple_elem_list, rhs!(expr, comma, tuple_elem_list));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        addr_elem,
+        rhs!(l_paren, tuple_expr_inner, r_paren),
+        ProdTag::AddrElemTuple,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        tuple_expr_inner,
+        rhs!(),
+        ProdTag::TupleExprInnerEmpty,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        tuple_expr_inner,
+        rhs!(expr, comma, tuple_elem_list),
+        ProdTag::TupleExprInnerExpr,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        tuple_elem_list,
+        rhs!(),
+        ProdTag::TupleElemListEmpty,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        tuple_elem_list,
+        rhs!(expr),
+        ProdTag::TupleElemListExpr,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        tuple_elem_list,
+        rhs!(expr, comma, tuple_elem_list),
+        ProdTag::TupleElemListExprList,
+    );
 
     /*
        9.3 元组元素（依赖0.3，拓展0.3）
        <可取元素> -><可取元素> '.' <NUM>
     */
-    g.add_production(addr_elem, rhs!(addr_elem, dot, num));
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        addr_elem,
+        rhs!(addr_elem, dot, num),
+        ProdTag::AddrElemField,
+    );
 
     g.set_start(program);
     let eof = g.add_terminal("eof");
@@ -585,5 +1299,9 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         eof,
     };
     let grammar = g.build()?;
-    Ok(GrammarContext { grammar, terminals })
+    Ok(GrammarContext {
+        grammar,
+        terminals,
+        prod_tags,
+    })
 }

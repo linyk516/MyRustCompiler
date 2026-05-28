@@ -5,6 +5,7 @@ use clap::Parser;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 
+pub mod ast;
 pub mod compiler;
 pub mod lexer;
 mod my_grammar;
@@ -18,6 +19,8 @@ struct Args {
     verbose: bool,
     #[arg(long, default_value_t = false)]
     show_tokens: bool,
+    #[arg(long, default_value_t = false)]
+    show_ast: bool,
     #[arg(long, default_value_t = false)]
     color: bool,
     #[arg(long, default_value_t = false)]
@@ -45,11 +48,13 @@ fn main() {
 
     let file = SourceFile::from_path(&file_paths[0]).expect("failed to read file");
 
-    let outcome = compiler.compile(file);
+    let outcome = compiler.compile(file.clone());
+
     let use_color = !args.no_color && (args.color || std::io::stderr().is_terminal());
     let renderer = CliRenderer::new(
         RenderConfig::new(verbose)
             .with_show_tokens(args.show_tokens)
+            .with_show_ast(args.show_ast)
             .with_color(use_color),
     );
     let rendered = renderer.render_outcome(&compiler, &outcome);

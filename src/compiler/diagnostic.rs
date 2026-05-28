@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::{
+    ast::lower::LowerError,
     compiler::source::SourceFile,
     lexer::{
         error::{LexError, LexErrorKind},
@@ -21,6 +22,7 @@ pub enum Severity {
 pub enum DiagnosticStage {
     Lexer,
     Parser,
+    Lower,
     FrontendBuild,
 }
 
@@ -86,6 +88,9 @@ pub enum DiagnosticDetails {
         expected: Vec<ExpectedTerminal>,
     },
     ParseInternal {
+        reason: String,
+    },
+    LowerInternal {
         reason: String,
     },
 }
@@ -300,6 +305,30 @@ impl Diagnostic {
             .note("this may indicate invalid reduce logic or an inconsistent parse table")
             .help("rebuild the frontend cache with `--rebuild`; if it persists, inspect parser reduce logic"),
         }
+    }
+
+    /// 从LowerError构造诊断信息
+    pub fn from_lower_error(
+        error: &LowerError,
+        source: &SourceFile,
+        _grammar_ctx: &GrammarContext,
+    ) -> Self {
+        let span = error.span.clone();
+        let range = SourceRange::from_span(&span, source);
+
+        Self::error(
+            DiagnosticStage::Lower,
+            DiagnosticCategory::Internal,
+            "E0201",
+            "failed to lower CST into AST",
+            source,
+            DiagnosticDetails::LowerInternal {
+                reason: error.message.clone(),
+            },
+        )
+        .label(span, range, error.message.clone(), true)
+        .note("this usually indicates a mismatch between grammar productions and AST lowering")
+        .help("check the production tag handling in the lowerer")
     }
 }
 

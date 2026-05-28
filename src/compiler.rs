@@ -1,3 +1,5 @@
+use crate::ast::lower::Lowerer;
+use crate::ast::ty::Program;
 use crate::compiler::diagnostic::Diagnostic;
 use crate::compiler::output::CompileOutcome;
 use crate::compiler::source::SourceFile;
@@ -65,9 +67,21 @@ impl Compiler {
             Diagnostic::from_parse_error(error, &source, &self.front_end.grammar_ctx)
         }));
 
+        let mut ast: Option<Program> = None;
+
+        if let Some(parse_result) = &parse_outcome.result {
+            let lowerer = Lowerer::new(&parse_result.cst, &source, &self.front_end.grammar_ctx);
+            match lowerer.lower() {
+                Ok(p) => ast = Some(p),
+                Err(e) => diagnostics.extend(e.iter().map(|error| {
+                    Diagnostic::from_lower_error(error, &source, &self.front_end.grammar_ctx)
+                })),
+            }
+        }
+
         let output = parse_outcome
             .result
-            .map(|parse_result| CompileOutput::new(tokens, parse_result));
+            .map(|parse_result| CompileOutput::new(tokens, parse_result, ast));
 
         CompileOutcome {
             source,

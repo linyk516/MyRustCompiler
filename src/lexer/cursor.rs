@@ -27,6 +27,7 @@ impl<'a> Cursor<'a> {
     }
 
     /// 判断是否读到文件末尾
+    #[allow(dead_code)]
     pub fn is_eof(&self) -> bool {
         self.src_iter.clone().next().is_none()
     }
