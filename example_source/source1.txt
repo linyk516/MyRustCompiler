@@ -9,7 +9,6 @@ fn square(x:i32) -> i32 {
 
 fn inc_ref(p:&mut i32) -> i32 {
     *p = *p + 1;
-    let mut p = &mut a;
     return *p;
 }
 

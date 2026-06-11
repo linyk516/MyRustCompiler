@@ -1,0 +1,8 @@
+fn main() -> i32 {
+    let arr:[i32; 4] = [1, 2, 3, 4];
+    let pair:(i32, i32) = (arr.0, arr.3);
+    let first:i32 = pair.0;
+    let second:i32 = pair.1;
+    let also:i32 = arr[2];
+    return first + second + also;
+}

@@ -1,9 +1,12 @@
 use crate::ast::lower::Lowerer;
 use crate::ast::ty::Program;
-use crate::compiler::diagnostic::Diagnostic;
+use crate::compiler::diagnostic::{Diagnostic, Severity};
 use crate::compiler::output::CompileOutcome;
 use crate::compiler::source::SourceFile;
 use crate::compiler::utils::FrontendUtil;
+use crate::hir::lower::HirLowerer;
+use crate::hir::output::HirOutput;
+use crate::ir::lower::IrLowerCtx;
 use crate::lexer::error::LexError;
 use crate::lexer::token::{Span, Token, TokenKind};
 use crate::lexer::{LexOutput, Lexer};
@@ -12,6 +15,8 @@ use crate::parser::CstSpanDisplayMode;
 use crate::parser::automaton::AutomationBuildErr;
 use crate::parser::engine::ParserEngine;
 use crate::parser::error::TableBuildError;
+use crate::thir::lower::ThirLowerCtx;
+use crate::typecheck::check::TypeckCtx;
 use serde_binary_adv::Serializer;
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -71,6 +76,7 @@ impl Compiler {
 
         if let Some(parse_result) = &parse_outcome.result {
             let lowerer = Lowerer::new(&parse_result.cst, &source, &self.front_end.grammar_ctx);
+
             match lowerer.lower() {
                 Ok(p) => ast = Some(p),
                 Err(e) => diagnostics.extend(e.iter().map(|error| {
@@ -79,9 +85,80 @@ impl Compiler {
             }
         }
 
-        let output = parse_outcome
-            .result
-            .map(|parse_result| CompileOutput::new(tokens, parse_result, ast));
+        let mut hir_output = None;
+        let mut typeck_output = None;
+        let mut thir_output = None;
+        let mut ir_output = None;
+
+        if let Some(p) = &ast {
+            let hir_lowerer = HirLowerer::new(p);
+            let result = hir_lowerer.lower();
+            diagnostics.extend(
+                result
+                    .errors
+                    .iter()
+                    .map(|error| Diagnostic::from_hir_lower_error(error, &source)),
+            );
+
+            hir_output = Some(HirOutput {
+                hir: result.hir,
+                defs: result.defs,
+                locals: result.locals,
+            })
+        }
+
+        if let Some(hir) = &hir_output {
+            let result = TypeckCtx::new(&hir.hir, &hir.defs, &hir.locals).check_program();
+            diagnostics.extend(
+                result
+                    .errors
+                    .iter()
+                    .map(|error| Diagnostic::from_type_error(error, &source, &result.tys)),
+            );
+            let has_prior_errors = diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.severity == Severity::Error);
+            if result.errors.is_empty() && !has_prior_errors {
+                let thir_result = ThirLowerCtx::new(
+                    &hir.hir,
+                    &hir.defs,
+                    &hir.locals,
+                    &result.results,
+                    &result.tys,
+                )
+                .lower();
+                diagnostics.extend(
+                    thir_result
+                        .errors
+                        .iter()
+                        .map(|error| Diagnostic::from_thir_lower_error(error, &source)),
+                );
+                if thir_result.errors.is_empty() {
+                    let ir_result = IrLowerCtx::new(&thir_result.program, &result.tys).lower();
+                    diagnostics.extend(
+                        ir_result
+                            .errors
+                            .iter()
+                            .map(|error| Diagnostic::from_ir_lower_error(error, &source)),
+                    );
+                    ir_output = Some(ir_result);
+                }
+                thir_output = Some(thir_result);
+            }
+            typeck_output = Some(result);
+        }
+
+        let output = parse_outcome.result.map(|parse_result| {
+            CompileOutput::new(
+                tokens,
+                parse_result,
+                ast,
+                hir_output,
+                typeck_output,
+                thir_output,
+                ir_output,
+            )
+        });
 
         CompileOutcome {
             source,

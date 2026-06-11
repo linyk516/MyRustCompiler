@@ -8,6 +8,10 @@ impl Span {
     pub fn text<'a>(&self, src: &'a str) -> Option<&'a str> {
         src.get(self.start..self.end)
     }
+
+    pub fn default() -> Self {
+        Self { start: 0, end: 0 }
+    }
 }
 
 #[derive(Debug, Clone)]

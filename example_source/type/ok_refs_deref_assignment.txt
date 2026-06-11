@@ -1,0 +1,11 @@
+fn inc(p:&mut i32) -> i32 {
+    *p = *p + 1;
+    return *p;
+}
+
+fn main() -> i32 {
+    let mut x:i32 = 1;
+    let r:&mut i32 = &mut x;
+    *r = *r + 2;
+    return inc(&mut x);
+}

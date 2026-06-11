@@ -1,0 +1,20 @@
+fn main() -> i32 {
+    let mut total:i32 = 0;
+
+    for mut i:i32 in 0..4 {
+        total = total + i;
+    }
+
+    while total < 20 {
+        total = total + 3;
+        if total == 9 {
+            continue;
+        } else if total > 15 {
+            break;
+        } else {
+            ;
+        }
+    }
+
+    return total;
+}

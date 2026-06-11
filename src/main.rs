@@ -7,9 +7,13 @@ use std::path::PathBuf;
 
 pub mod ast;
 pub mod compiler;
+pub mod hir;
+pub mod ir;
 pub mod lexer;
 mod my_grammar;
 pub mod parser;
+pub mod thir;
+pub mod typecheck;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -21,6 +25,14 @@ struct Args {
     show_tokens: bool,
     #[arg(long, default_value_t = false)]
     show_ast: bool,
+    #[arg(long, default_value_t = false)]
+    show_hir: bool,
+    #[arg(long, visible_alias = "show-typeck", default_value_t = false)]
+    show_typecheck: bool,
+    #[arg(long, default_value_t = false)]
+    show_thir: bool,
+    #[arg(long, default_value_t = false)]
+    show_ir: bool,
     #[arg(long, default_value_t = false)]
     color: bool,
     #[arg(long, default_value_t = false)]
@@ -55,6 +67,10 @@ fn main() {
         RenderConfig::new(verbose)
             .with_show_tokens(args.show_tokens)
             .with_show_ast(args.show_ast)
+            .with_show_hir(args.show_hir)
+            .with_show_typecheck(args.show_typecheck)
+            .with_show_thir(args.show_thir)
+            .with_show_ir(args.show_ir)
             .with_color(use_color),
     );
     let rendered = renderer.render_outcome(&compiler, &outcome);

@@ -2,8 +2,12 @@ use crate::compiler::Compiler;
 use crate::compiler::diagnostic::{Diagnostic, DiagnosticLabel, Severity};
 use crate::compiler::output::{CompileOutcome, CompileOutput};
 use crate::compiler::source::SourceFile;
+use crate::hir::pretty::HirDump;
+use crate::ir::pretty::IrDump;
 use crate::lexer::token::{Token, TokenKind};
 use crate::parser::CstSpanDisplayMode;
+use crate::thir::pretty::ThirDump;
+use crate::typecheck::pretty::TypeckDump;
 use std::fmt::Write;
 
 #[derive(Clone, Copy)]
@@ -41,6 +45,10 @@ pub struct RenderConfig {
     pub show_help: bool,
     pub show_tokens: bool,
     pub show_ast: bool,
+    pub show_hir: bool,
+    pub show_typecheck: bool,
+    pub show_thir: bool,
+    pub show_ir: bool,
     pub color: bool,
 }
 
@@ -52,6 +60,10 @@ impl RenderConfig {
             show_help: true,
             show_tokens: false,
             show_ast: false,
+            show_hir: false,
+            show_typecheck: false,
+            show_thir: false,
+            show_ir: false,
             color: false,
         }
     }
@@ -63,6 +75,26 @@ impl RenderConfig {
 
     pub fn with_show_ast(mut self, show_ast: bool) -> Self {
         self.show_ast = show_ast;
+        self
+    }
+
+    pub fn with_show_hir(mut self, show_hir: bool) -> Self {
+        self.show_hir = show_hir;
+        self
+    }
+
+    pub fn with_show_typecheck(mut self, show_typecheck: bool) -> Self {
+        self.show_typecheck = show_typecheck;
+        self
+    }
+
+    pub fn with_show_thir(mut self, show_thir: bool) -> Self {
+        self.show_thir = show_thir;
+        self
+    }
+
+    pub fn with_show_ir(mut self, show_ir: bool) -> Self {
+        self.show_ir = show_ir;
         self
     }
 
@@ -102,6 +134,18 @@ impl CliRenderer {
             if self.config.show_ast {
                 self.render_ast(&mut stdout, output);
             }
+            if self.config.show_hir {
+                self.render_hir(&mut stdout, output);
+            }
+            if self.config.show_typecheck {
+                self.render_typecheck(&mut stdout, output);
+            }
+            if self.config.show_thir {
+                self.render_thir(&mut stdout, output);
+            }
+            if self.config.show_ir {
+                self.render_ir(&mut stdout, output);
+            }
             if self.config.verbose {
                 let cst = compiler.display_cst_with_mode(
                     output,
@@ -132,7 +176,15 @@ impl CliRenderer {
         let _ = writeln!(out, "{}", title);
         let _ = writeln!(out);
         let _ = writeln!(out, "{:<12}{}", "File", self.source_name(&outcome.source));
-        let stage = if output.ast().is_some() {
+        let stage = if output.ir().is_some() {
+            "lexer + parser + lower + hir + typecheck + thir + ir"
+        } else if output.thir().is_some() {
+            "lexer + parser + lower + hir + typecheck + thir"
+        } else if output.typeck().is_some() {
+            "lexer + parser + lower + hir + typecheck"
+        } else if output.hir().is_some() {
+            "lexer + parser + lower + hir"
+        } else if output.ast().is_some() {
             "lexer + parser + lower"
         } else {
             "lexer + parser"
@@ -151,6 +203,72 @@ impl CliRenderer {
         match output.ast() {
             Some(ast) => {
                 let _ = write!(out, "{}", ast);
+            }
+            None => {
+                let _ = writeln!(out, "<not available>");
+            }
+        }
+    }
+
+    fn render_hir(&self, out: &mut String, output: &CompileOutput) {
+        let _ = writeln!(out);
+        let _ = writeln!(out, "HIR");
+        let _ = writeln!(out);
+
+        match output.hir() {
+            Some(hir) => {
+                let dump = HirDump::new(&hir.hir, &hir.defs, &hir.locals);
+                let _ = writeln!(out, "{}", dump);
+                let _ = writeln!(out, "{}", dump.dum_def());
+                let _ = write!(out, "{}", dump.dum_local());
+            }
+            None => {
+                let _ = writeln!(out, "<not available>");
+            }
+        }
+    }
+
+    fn render_typecheck(&self, out: &mut String, output: &CompileOutput) {
+        let _ = writeln!(out);
+        let _ = writeln!(out, "Typecheck");
+        let _ = writeln!(out);
+
+        match output.typeck() {
+            Some(typeck) => {
+                let dump = TypeckDump::new(&typeck.results, &typeck.tys);
+                let _ = write!(out, "{}", dump);
+            }
+            None => {
+                let _ = writeln!(out, "<not available>");
+            }
+        }
+    }
+
+    fn render_thir(&self, out: &mut String, output: &CompileOutput) {
+        let _ = writeln!(out);
+        let _ = writeln!(out, "THIR");
+        let _ = writeln!(out);
+
+        match (output.thir(), output.typeck()) {
+            (Some(thir), Some(typeck)) => {
+                let dump = ThirDump::new(&thir.program, &typeck.tys);
+                let _ = write!(out, "{}", dump);
+            }
+            _ => {
+                let _ = writeln!(out, "<not available>");
+            }
+        }
+    }
+
+    fn render_ir(&self, out: &mut String, output: &CompileOutput) {
+        let _ = writeln!(out);
+        let _ = writeln!(out, "IR");
+        let _ = writeln!(out);
+
+        match output.ir() {
+            Some(ir) => {
+                let dump = IrDump::new(&ir.program);
+                let _ = write!(out, "{}", dump);
             }
             None => {
                 let _ = writeln!(out, "<not available>");

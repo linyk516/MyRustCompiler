@@ -1,0 +1,4 @@
+fn inc_ref(p:&mut i32) -> i32 {
+    *p = *p + 1;
+    return *p;
+}

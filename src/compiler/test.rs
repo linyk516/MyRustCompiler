@@ -255,6 +255,174 @@ fn cli_renderer_prints_ast_when_enabled() {
 }
 
 #[test]
+fn cli_renderer_prints_hir_when_enabled() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() {}");
+    let outcome = compiler.compile(source);
+    let renderer = CliRenderer::new(RenderConfig::new(false).with_show_hir(true));
+
+    let rendered = renderer.render_outcome(&compiler, &outcome);
+
+    assert!(rendered.stdout.contains("HIR"));
+    assert!(rendered.stdout.contains("HIR Program"));
+    assert!(rendered.stdout.contains("DefTable"));
+    assert!(rendered.stdout.contains("LocalTable"));
+}
+
+#[test]
+fn cli_renderer_prints_typecheck_when_enabled() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() {}");
+    let outcome = compiler.compile(source);
+    let renderer = CliRenderer::new(RenderConfig::new(false).with_show_typecheck(true));
+
+    let rendered = renderer.render_outcome(&compiler, &outcome);
+
+    assert!(rendered.stdout.contains("Typecheck"));
+    assert!(rendered.stdout.contains("TypeckResults"));
+    assert!(rendered.stdout.contains("DefTys"));
+    assert!(rendered.stdout.contains("LocalTys"));
+    assert!(rendered.stdout.contains("ExprTys"));
+}
+
+#[test]
+fn compiler_compile_returns_thir_for_type_correct_program() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() {}");
+
+    let outcome = compiler.compile(source);
+    assert!(!outcome.has_errors());
+    let output = outcome.output.as_ref().expect("source should parse");
+
+    assert!(output.thir().is_some());
+}
+
+#[test]
+fn compiler_compile_skips_thir_when_typecheck_fails() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() -> i32 {}");
+
+    let outcome = compiler.compile(source);
+    let output = outcome.output.as_ref().expect("source should parse");
+
+    assert!(outcome.has_errors());
+    assert!(output.typeck().is_some());
+    assert!(output.thir().is_none());
+}
+
+#[test]
+fn compiler_compile_skips_thir_when_frontend_has_errors() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() { @ }");
+
+    let outcome = compiler.compile(source);
+    let output = outcome
+        .output
+        .as_ref()
+        .expect("recovering parse should keep output");
+
+    assert!(outcome.has_errors());
+    assert!(output.thir().is_none());
+}
+
+#[test]
+fn cli_renderer_prints_thir_when_enabled() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() {}");
+    let outcome = compiler.compile(source);
+    let renderer = CliRenderer::new(RenderConfig::new(false).with_show_thir(true));
+
+    let rendered = renderer.render_outcome(&compiler, &outcome);
+
+    assert!(rendered.stdout.contains("THIR"));
+    assert!(rendered.stdout.contains("THIR Program"));
+    assert!(rendered.stdout.contains("Bodies"));
+}
+
+#[test]
+fn compiler_compile_returns_ir_for_type_correct_program() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() {}");
+
+    let outcome = compiler.compile(source);
+    assert!(!outcome.has_errors());
+    let output = outcome.output.as_ref().expect("source should parse");
+
+    assert!(output.ir().is_some());
+}
+
+#[test]
+fn compiler_compile_skips_ir_when_typecheck_fails() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() -> i32 {}");
+
+    let outcome = compiler.compile(source);
+    let output = outcome.output.as_ref().expect("source should parse");
+
+    assert!(outcome.has_errors());
+    assert!(output.typeck().is_some());
+    assert!(output.thir().is_none());
+    assert!(output.ir().is_none());
+}
+
+#[test]
+fn compiler_compile_skips_ir_when_frontend_has_errors() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() { @ }");
+
+    let outcome = compiler.compile(source);
+    let output = outcome
+        .output
+        .as_ref()
+        .expect("recovering parse should keep output");
+
+    assert!(outcome.has_errors());
+    assert!(output.ir().is_none());
+}
+
+#[test]
+fn cli_renderer_prints_ir_when_enabled() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() { let mut x:i32 = 1; x = x + 1; }");
+    let outcome = compiler.compile(source);
+    let renderer = CliRenderer::new(RenderConfig::new(false).with_show_ir(true));
+
+    let rendered = renderer.render_outcome(&compiler, &outcome);
+
+    assert!(rendered.stdout.contains("IR"));
+    assert!(rendered.stdout.contains("IR Program"));
+    assert!(rendered.stdout.contains("(alloca,"));
+    assert!(rendered.stdout.contains("(store,"));
+    assert!(rendered.stdout.contains("(add,"));
+}
+
+#[test]
+fn cli_renderer_prints_ir_unavailable_when_typecheck_failed() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() -> i32 {}");
+    let outcome = compiler.compile(source);
+    let renderer = CliRenderer::new(RenderConfig::new(false).with_show_ir(true));
+
+    let rendered = renderer.render_outcome(&compiler, &outcome);
+
+    assert!(rendered.stdout.contains("IR"));
+    assert!(rendered.stdout.contains("<not available>"));
+}
+
+#[test]
+fn cli_renderer_prints_thir_unavailable_when_typecheck_failed() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() -> i32 {}");
+    let outcome = compiler.compile(source);
+    let renderer = CliRenderer::new(RenderConfig::new(false).with_show_thir(true));
+
+    let rendered = renderer.render_outcome(&compiler, &outcome);
+
+    assert!(rendered.stdout.contains("THIR"));
+    assert!(rendered.stdout.contains("<not available>"));
+}
+
+#[test]
 fn cli_renderer_can_color_diagnostics_when_enabled() {
     let compiler = Compiler::build(false).expect("compiler should build");
     let source = SourceFile::new("fn main() {@}");

@@ -1,0 +1,6 @@
+fn main() -> i32 {
+    let a = 1;
+    let b:i32 = a + 2;
+    let c = { let t:i32 = b + 3; t * 2 };
+    return c;
+}

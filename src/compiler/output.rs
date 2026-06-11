@@ -1,23 +1,43 @@
 use crate::ast::ty::Program;
 use crate::compiler::diagnostic::{Diagnostic, Severity};
 use crate::compiler::source::SourceFile;
+use crate::hir::output::HirOutput;
+use crate::ir::output::IrOutput;
 use crate::lexer::token::Token;
 use crate::my_grammar::GrammarContext;
 use crate::parser::{CST, CSTDisplay, CstSpanDisplayMode, ParseResult};
+use crate::thir::output::ThirOutput;
+use crate::typecheck::result::TypeckOutput;
 
 #[derive(Debug, Clone)]
 pub struct CompileOutput {
     pub tokens: Vec<Token>,
     pub parse_result: ParseResult,
     pub ast: Option<Program>,
+    pub hir: Option<HirOutput>,
+    pub typeck: Option<TypeckOutput>,
+    pub thir: Option<ThirOutput>,
+    pub ir: Option<IrOutput>,
 }
 
 impl CompileOutput {
-    pub fn new(tokens: Vec<Token>, parse_result: ParseResult, ast: Option<Program>) -> Self {
+    pub fn new(
+        tokens: Vec<Token>,
+        parse_result: ParseResult,
+        ast: Option<Program>,
+        hir: Option<HirOutput>,
+        typeck: Option<TypeckOutput>,
+        thir: Option<ThirOutput>,
+        ir: Option<IrOutput>,
+    ) -> Self {
         Self {
             tokens,
             parse_result,
             ast,
+            hir,
+            typeck,
+            thir,
+            ir,
         }
     }
 
@@ -35,6 +55,22 @@ impl CompileOutput {
 
     pub fn ast(&self) -> Option<&Program> {
         self.ast.as_ref()
+    }
+
+    pub fn hir(&self) -> Option<&HirOutput> {
+        self.hir.as_ref()
+    }
+
+    pub fn typeck(&self) -> Option<&TypeckOutput> {
+        self.typeck.as_ref()
+    }
+
+    pub fn thir(&self) -> Option<&ThirOutput> {
+        self.thir.as_ref()
+    }
+
+    pub fn ir(&self) -> Option<&IrOutput> {
+        self.ir.as_ref()
     }
 
     pub fn display_cst<'a>(

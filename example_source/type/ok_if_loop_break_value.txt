@@ -1,0 +1,12 @@
+fn main() -> i32 {
+    let picked:i32 = if 1 { 10 } else { 20 };
+    let result:i32 = loop {
+        if picked > 15 {
+            break picked;
+        } else {
+            break picked + 5;
+        }
+        0
+    };
+    return result;
+}
