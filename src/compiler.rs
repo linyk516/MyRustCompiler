@@ -134,7 +134,8 @@ impl Compiler {
                         .map(|error| Diagnostic::from_thir_lower_error(error, &source)),
                 );
                 if thir_result.errors.is_empty() {
-                    let ir_result = IrLowerCtx::new(&thir_result.program, &result.tys).lower();
+                    let ir_result =
+                        IrLowerCtx::new(&thir_result.program, &hir.defs, &result.tys).lower();
                     diagnostics.extend(
                         ir_result
                             .errors

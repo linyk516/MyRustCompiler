@@ -390,10 +390,13 @@ fn cli_renderer_prints_ir_when_enabled() {
     let rendered = renderer.render_outcome(&compiler, &outcome);
 
     assert!(rendered.stdout.contains("IR"));
-    assert!(rendered.stdout.contains("IR Program"));
-    assert!(rendered.stdout.contains("(alloca,"));
-    assert!(rendered.stdout.contains("(store,"));
-    assert!(rendered.stdout.contains("(add,"));
+    assert!(rendered.stdout.contains("; LLVM-like IR"));
+    assert!(rendered.stdout.contains("define void @main"));
+    assert!(rendered.stdout.contains("entry:"));
+    assert!(rendered.stdout.contains("alloca i32"));
+    assert!(rendered.stdout.contains("store i32"));
+    assert!(rendered.stdout.contains("add i32"));
+    assert!(rendered.stdout.contains("ret void"));
 }
 
 #[test]

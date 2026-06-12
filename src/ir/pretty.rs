@@ -1,8 +1,11 @@
 use std::fmt::{Display, Write};
 
 use crate::ir::{
-    id::{IrBlockId, IrFunctionId, IrLocalId, IrTempId},
-    node::{IrOperand, IrPlace, IrProgram, QuadOp, Terminator},
+    id::{IrBlockId, IrFunctionId, IrValueId},
+    node::{
+        IrBinaryOp, IrFunction, IrIcmpPred, IrInstr, IrInstrKind, IrProgram, IrTerminator, IrTy,
+        IrValueKind,
+    },
 };
 
 pub struct IrDump<'a> {
@@ -52,139 +55,264 @@ impl<'a> IrDumper<'a> {
     }
 
     fn program(&mut self) {
-        self.line(0, "IR Program");
+        self.line(0, "; LLVM-like IR");
         if self.program.functions.is_empty() {
-            self.line(1, "<empty>");
+            self.line(0, "; <empty>");
             return;
         }
 
         for index in 0..self.program.functions.len() {
-            self.function(IrFunctionId(index), 1);
+            if index > 0 {
+                self.line(0, "");
+            }
+            self.function(IrFunctionId(index));
         }
     }
 
-    fn function(&mut self, id: IrFunctionId, indent: usize) {
+    fn function(&mut self, id: IrFunctionId) {
         let Some(function) = self.program.function(id) else {
-            self.line(indent, format!("{id:?}: <missing>"));
+            self.line(0, format!("; missing function {:?}", id));
             return;
         };
 
-        self.line(indent, format!("Function {:?}", function.owner));
-        self.line(indent + 1, format!("entry bb{}", function.entry.index()));
+        let params = function
+            .params
+            .iter()
+            .map(|param| {
+                format!(
+                    "{} {}",
+                    self.ty_text(&param.ty),
+                    self.value_text(function, param.value)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.line(
+            0,
+            format!(
+                "define {} @{}({}) {{",
+                self.ty_text(&function.ret_ty),
+                function.symbol_name,
+                params
+            ),
+        );
 
-        if !function.locals.is_empty() {
-            self.line(indent + 1, "Locals");
-            for index in 0..function.locals.len() {
-                let id = IrLocalId(index);
-                let local = &function.locals[index];
-                let prefix = if local.mutable { "mut " } else { "" };
-                self.line(
-                    indent + 2,
-                    format!("local{}: {}{}", id.index(), prefix, local.name),
-                );
-            }
-        }
-
-        if !function.temps.is_empty() {
-            self.line(indent + 1, "Temps");
-            for index in 0..function.temps.len() {
-                self.line(indent + 2, format!("t{}", IrTempId(index).index()));
-            }
-        }
-
-        self.line(indent + 1, "Quads");
         for index in 0..function.blocks.len() {
-            let id = IrBlockId(index);
-            let block = &function.blocks[index];
-            self.line(indent + 2, format!("bb{}:", id.index()));
-            if block.quads.is_empty() {
-                self.line(indent + 3, "<empty>");
-            } else {
-                for quad in &block.quads {
-                    self.line(
-                        indent + 3,
-                        format!(
-                            "({}, {}, {}, {})",
-                            self.op_text(&quad.op),
-                            self.arg_text(&quad.arg1),
-                            self.arg_text(&quad.arg2),
-                            self.place_text(&quad.result)
-                        ),
-                    );
-                }
+            self.block(function, IrBlockId(index));
+        }
+
+        self.line(0, "}");
+    }
+
+    fn block(&mut self, function: &IrFunction, id: IrBlockId) {
+        let Some(block) = function.block(id) else {
+            return;
+        };
+
+        self.line(0, format!("{}:", block.label));
+        for instr in &block.instrs {
+            self.instr(function, instr);
+        }
+
+        match &block.terminator {
+            Some(terminator) => self.line(1, self.terminator_text(function, terminator)),
+            None => self.line(1, "; <missing terminator>"),
+        }
+    }
+
+    fn instr(&mut self, function: &IrFunction, instr: &IrInstr) {
+        let result = instr
+            .result
+            .map(|value| format!("{} = ", self.value_text(function, value)))
+            .unwrap_or_default();
+
+        let text = match &instr.kind {
+            IrInstrKind::Alloca { alloc_ty } => {
+                format!("{}alloca {}", result, self.ty_text(alloc_ty))
             }
-            self.line(indent + 3, self.terminator_text(&block.terminator));
-        }
+            IrInstrKind::Load { ty, ptr } => format!(
+                "{}load {}, ptr {}",
+                result,
+                self.ty_text(ty),
+                self.value_text(function, *ptr)
+            ),
+            IrInstrKind::Store { ty, value, ptr } => format!(
+                "store {} {}, ptr {}",
+                self.ty_text(ty),
+                self.value_text(function, *value),
+                self.value_text(function, *ptr)
+            ),
+            IrInstrKind::Gep {
+                source_ty,
+                base,
+                indices,
+            } => {
+                let indices = indices
+                    .iter()
+                    .map(|index| {
+                        let ty = function
+                            .value(*index)
+                            .map(|value| self.ty_text(&value.ty))
+                            .unwrap_or_else(|| "i32".to_string());
+                        format!("{} {}", ty, self.value_text(function, *index))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "{}getelementptr inbounds {}, ptr {}, {}",
+                    result,
+                    self.ty_text(source_ty),
+                    self.value_text(function, *base),
+                    indices
+                )
+            }
+            IrInstrKind::Binary { op, ty, lhs, rhs } => format!(
+                "{}{} {} {}, {}",
+                result,
+                self.binary_op_text(op),
+                self.ty_text(ty),
+                self.value_text(function, *lhs),
+                self.value_text(function, *rhs)
+            ),
+            IrInstrKind::Icmp { pred, ty, lhs, rhs } => format!(
+                "{}icmp {} {} {}, {}",
+                result,
+                self.icmp_pred_text(pred),
+                self.ty_text(ty),
+                self.value_text(function, *lhs),
+                self.value_text(function, *rhs)
+            ),
+            IrInstrKind::Zext {
+                from_ty,
+                value,
+                to_ty,
+            } => format!(
+                "{}zext {} {} to {}",
+                result,
+                self.ty_text(from_ty),
+                self.value_text(function, *value),
+                self.ty_text(to_ty)
+            ),
+            IrInstrKind::Call {
+                callee,
+                ret_ty,
+                args,
+            } => {
+                let args = args
+                    .iter()
+                    .map(|(ty, value)| {
+                        format!("{} {}", self.ty_text(ty), self.value_text(function, *value))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "{}call {} @{}({})",
+                    result,
+                    self.ty_text(ret_ty),
+                    self.callee_text(*callee),
+                    args
+                )
+            }
+        };
+
+        self.line(1, text);
     }
 
-    fn op_text(&self, op: &QuadOp) -> String {
-        match op {
-            QuadOp::Alloca => "alloca".to_string(),
-            QuadOp::Add => "add".to_string(),
-            QuadOp::Sub => "sub".to_string(),
-            QuadOp::Mul => "mul".to_string(),
-            QuadOp::Div => "sdiv".to_string(),
-            QuadOp::Eq => "icmp_eq".to_string(),
-            QuadOp::Ne => "icmp_ne".to_string(),
-            QuadOp::Lt => "icmp_slt".to_string(),
-            QuadOp::Le => "icmp_sle".to_string(),
-            QuadOp::Gt => "icmp_sgt".to_string(),
-            QuadOp::Ge => "icmp_sge".to_string(),
-            QuadOp::Load => "load".to_string(),
-            QuadOp::Store => "store".to_string(),
-            QuadOp::Gep => "gep".to_string(),
-            QuadOp::Arg => "arg".to_string(),
-            QuadOp::Call(def) => format!("call {:?}", def),
-        }
-    }
-
-    fn arg_text(&self, arg: &Option<IrOperand>) -> String {
-        arg.as_ref()
-            .map(|arg| self.operand_text(arg))
-            .unwrap_or_else(|| "_".to_string())
-    }
-
-    fn operand_text(&self, operand: &IrOperand) -> String {
-        match operand {
-            IrOperand::ConstInt(value) => value.to_string(),
-            IrOperand::Param(index) => format!("arg{index}"),
-            IrOperand::Local(local) => format!("local{}", local.index()),
-            IrOperand::Temp(temp) => format!("t{}", temp.index()),
-        }
-    }
-
-    fn place_text(&self, place: &Option<IrPlace>) -> String {
-        place
-            .as_ref()
-            .map(|place| self.ir_place_text(place))
-            .unwrap_or_else(|| "_".to_string())
-    }
-
-    fn ir_place_text(&self, place: &IrPlace) -> String {
-        match place {
-            IrPlace::Local(local) => format!("local{}", local.index()),
-            IrPlace::Temp(temp) => format!("t{}", temp.index()),
-        }
-    }
-
-    fn terminator_text(&self, terminator: &Terminator) -> String {
+    fn terminator_text(&self, function: &IrFunction, terminator: &IrTerminator) -> String {
         match terminator {
-            Terminator::Goto(block) => format!("goto bb{}", block.index()),
-            Terminator::If {
+            IrTerminator::Br { target } => {
+                format!("br label %{}", self.block_label(function, *target))
+            }
+            IrTerminator::CondBr {
                 cond,
                 then_bb,
                 else_bb,
             } => format!(
-                "if {} goto bb{} else bb{}",
-                self.operand_text(cond),
-                then_bb.index(),
-                else_bb.index()
+                "br i1 {}, label %{}, label %{}",
+                self.value_text(function, *cond),
+                self.block_label(function, *then_bb),
+                self.block_label(function, *else_bb)
             ),
-            Terminator::Return(value) => match value {
-                Some(value) => format!("return {}", self.operand_text(value)),
-                None => "return".to_string(),
+            IrTerminator::Ret { ty, value } => match value {
+                Some(value) => format!(
+                    "ret {} {}",
+                    self.ty_text(ty),
+                    self.value_text(function, *value)
+                ),
+                None => "ret void".to_string(),
             },
-            Terminator::Unreachable => "unreachable".to_string(),
+            IrTerminator::Unreachable => "unreachable".to_string(),
+        }
+    }
+
+    fn value_text(&self, function: &IrFunction, id: IrValueId) -> String {
+        let Some(value) = function.value(id) else {
+            return format!("%missing{}", id.index());
+        };
+
+        match &value.kind {
+            IrValueKind::ConstInt(value) => value.to_string(),
+            IrValueKind::Unit => "void".to_string(),
+            IrValueKind::Param(_) | IrValueKind::SlotAddr(_) | IrValueKind::InstrResult => value
+                .name
+                .clone()
+                .map(|name| format!("%{name}"))
+                .unwrap_or_else(|| format!("%v{}", id.index())),
+        }
+    }
+
+    fn callee_text(&self, callee: crate::hir::id::DefId) -> String {
+        self.program
+            .function_map
+            .get(&callee)
+            .and_then(|id| self.program.function(*id))
+            .map(|function| function.symbol_name.clone())
+            .unwrap_or_else(|| format!("fn{}", callee.index()))
+    }
+
+    fn block_label(&self, function: &IrFunction, id: IrBlockId) -> String {
+        function
+            .block(id)
+            .map(|block| block.label.clone())
+            .unwrap_or_else(|| format!("missing{}", id.index()))
+    }
+
+    fn ty_text(&self, ty: &IrTy) -> String {
+        match ty {
+            IrTy::I1 => "i1".to_string(),
+            IrTy::I32 => "i32".to_string(),
+            IrTy::Void => "void".to_string(),
+            IrTy::Ptr => "ptr".to_string(),
+            IrTy::Array { elem, len } => format!("[{} x {}]", len, self.ty_text(elem)),
+            IrTy::Struct(elems) => {
+                let elems = elems
+                    .iter()
+                    .map(|elem| self.ty_text(elem))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{{ {} }}", elems)
+            }
+            IrTy::Error => "<error>".to_string(),
+        }
+    }
+
+    fn binary_op_text(&self, op: &IrBinaryOp) -> &'static str {
+        match op {
+            IrBinaryOp::Add => "add",
+            IrBinaryOp::Sub => "sub",
+            IrBinaryOp::Mul => "mul",
+            IrBinaryOp::SDiv => "sdiv",
+        }
+    }
+
+    fn icmp_pred_text(&self, pred: &IrIcmpPred) -> &'static str {
+        match pred {
+            IrIcmpPred::Eq => "eq",
+            IrIcmpPred::Ne => "ne",
+            IrIcmpPred::Slt => "slt",
+            IrIcmpPred::Sle => "sle",
+            IrIcmpPred::Sgt => "sgt",
+            IrIcmpPred::Sge => "sge",
         }
     }
 }

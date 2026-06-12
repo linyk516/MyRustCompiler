@@ -3,14 +3,36 @@ use std::collections::HashMap;
 use crate::{
     ast::ty::BinaryOp,
     hir::id::DefId,
-    ir::id::{IrBlockId, IrFunctionId, IrLocalId, IrTempId},
+    ir::id::{IrBlockId, IrFunctionId, IrSlotId, IrValueId},
     lexer::token::Span,
     thir::id::ThirLocalId,
     typecheck::ty::TyId,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// LLVM-like IR 类型。`Ptr` 使用现代 LLVM opaque pointer 风格。
+pub enum IrTy {
+    I1,
+    I32,
+    Void,
+    Ptr,
+    Array { elem: Box<IrTy>, len: usize },
+    Struct(Vec<IrTy>),
+    Error,
+}
+
+impl IrTy {
+    pub fn is_void(&self) -> bool {
+        matches!(self, Self::Void)
+    }
+
+    pub fn is_i1(&self) -> bool {
+        matches!(self, Self::I1)
+    }
+}
+
 #[derive(Debug, Clone)]
-/// 四元式 IR 顶层结构，按函数保存已经线性化为基本块的中间代码。
+/// LLVM-like IR 顶层结构，按函数保存基本块和 typed instruction。
 pub struct IrProgram {
     pub functions: Vec<IrFunction>,
     pub function_map: HashMap<DefId, IrFunctionId>,
@@ -39,47 +61,68 @@ impl IrProgram {
 #[derive(Debug, Clone)]
 pub struct IrFunction {
     pub owner: DefId,
-    pub locals: Vec<IrLocal>,
-    pub temps: Vec<IrTemp>,
+    pub symbol_name: String,
+    pub params: Vec<IrParam>,
+    pub ret_ty: IrTy,
+    pub slots: Vec<IrSlot>,
+    pub values: Vec<IrValue>,
     pub blocks: Vec<IrBasicBlock>,
     pub entry: IrBlockId,
 }
 
 impl IrFunction {
-    pub fn new(owner: DefId) -> Self {
+    pub fn new(owner: DefId, symbol_name: String, ret_ty: IrTy) -> Self {
         Self {
             owner,
-            locals: vec![],
-            temps: vec![],
+            symbol_name,
+            params: vec![],
+            ret_ty,
+            slots: vec![],
+            values: vec![],
             blocks: vec![],
             entry: IrBlockId(usize::MAX),
         }
     }
 
-    pub fn alloc_local(&mut self, local: IrLocal) -> IrLocalId {
-        let id = IrLocalId(self.locals.len());
-        self.locals.push(local);
+    pub fn alloc_param(&mut self, ty: IrTy) -> IrValueId {
+        let index = self.params.len();
+        let value = self.alloc_value(IrValue {
+            ty: ty.clone(),
+            kind: IrValueKind::Param(index),
+            name: Some(format!("arg{index}")),
+        });
+        self.params.push(IrParam { ty, value });
+        value
+    }
+
+    pub fn alloc_slot(&mut self, slot: IrSlot) -> IrSlotId {
+        let id = IrSlotId(self.slots.len());
+        self.slots.push(slot);
         id
     }
 
-    pub fn alloc_temp(&mut self, temp: IrTemp) -> IrTempId {
-        let id = IrTempId(self.temps.len());
-        self.temps.push(temp);
+    pub fn alloc_value(&mut self, value: IrValue) -> IrValueId {
+        let id = IrValueId(self.values.len());
+        self.values.push(value);
         id
     }
 
-    pub fn alloc_block(&mut self) -> IrBlockId {
+    pub fn alloc_block(&mut self, label: impl Into<String>) -> IrBlockId {
         let id = IrBlockId(self.blocks.len());
-        self.blocks.push(IrBasicBlock::new());
+        self.blocks.push(IrBasicBlock::new(label.into()));
         id
     }
 
-    pub fn local(&self, id: IrLocalId) -> Option<&IrLocal> {
-        self.locals.get(id.index())
+    pub fn slot(&self, id: IrSlotId) -> Option<&IrSlot> {
+        self.slots.get(id.index())
     }
 
-    pub fn temp(&self, id: IrTempId) -> Option<&IrTemp> {
-        self.temps.get(id.index())
+    pub fn slot_mut(&mut self, id: IrSlotId) -> Option<&mut IrSlot> {
+        self.slots.get_mut(id.index())
+    }
+
+    pub fn value(&self, id: IrValueId) -> Option<&IrValue> {
+        self.values.get(id.index())
     }
 
     pub fn block(&self, id: IrBlockId) -> Option<&IrBasicBlock> {
@@ -92,120 +135,167 @@ impl IrFunction {
 }
 
 #[derive(Debug, Clone)]
-pub struct IrLocal {
+pub struct IrParam {
+    pub ty: IrTy,
+    pub value: IrValueId,
+}
+
+#[derive(Debug, Clone)]
+pub struct IrSlot {
     pub thir_local: Option<ThirLocalId>,
     pub name: String,
     pub mutable: bool,
-    pub ty: TyId,
+    pub source_ty: TyId,
+    pub value_ty: IrTy,
+    pub addr: Option<IrValueId>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct IrTemp {
-    pub ty: TyId,
+pub struct IrValue {
+    pub ty: IrTy,
+    pub kind: IrValueKind,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum IrValueKind {
+    ConstInt(i32),
+    Unit,
+    Param(usize),
+    SlotAddr(IrSlotId),
+    InstrResult,
 }
 
 #[derive(Debug, Clone)]
 pub struct IrBasicBlock {
-    pub quads: Vec<Quad>,
-    pub terminator: Terminator,
+    pub label: String,
+    pub instrs: Vec<IrInstr>,
+    pub terminator: Option<IrTerminator>,
 }
 
 impl IrBasicBlock {
-    pub fn new() -> Self {
+    pub fn new(label: String) -> Self {
         Self {
-            quads: vec![],
-            terminator: Terminator::Unreachable,
+            label,
+            instrs: vec![],
+            terminator: None,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IrOperand {
-    ConstInt(i32),
-    Param(usize),
-    Local(IrLocalId),
-    Temp(IrTempId),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IrPlace {
-    Local(IrLocalId),
-    Temp(IrTempId),
 }
 
 #[derive(Debug, Clone)]
-pub struct Quad {
-    pub op: QuadOp,
-    pub arg1: Option<IrOperand>,
-    pub arg2: Option<IrOperand>,
-    pub result: Option<IrPlace>,
+pub struct IrInstr {
+    pub result: Option<IrValueId>,
+    pub kind: IrInstrKind,
     pub span: Span,
 }
 
-impl Quad {
-    pub fn new(
-        op: QuadOp,
-        arg1: Option<IrOperand>,
-        arg2: Option<IrOperand>,
-        result: Option<IrPlace>,
-        span: Span,
-    ) -> Self {
-        Self {
-            op,
-            arg1,
-            arg2,
-            result,
-            span,
-        }
-    }
+#[derive(Debug, Clone)]
+pub enum IrInstrKind {
+    Alloca {
+        alloc_ty: IrTy,
+    },
+    Load {
+        ty: IrTy,
+        ptr: IrValueId,
+    },
+    Store {
+        ty: IrTy,
+        value: IrValueId,
+        ptr: IrValueId,
+    },
+    Gep {
+        source_ty: IrTy,
+        base: IrValueId,
+        indices: Vec<IrValueId>,
+    },
+    Binary {
+        op: IrBinaryOp,
+        ty: IrTy,
+        lhs: IrValueId,
+        rhs: IrValueId,
+    },
+    Icmp {
+        pred: IrIcmpPred,
+        ty: IrTy,
+        lhs: IrValueId,
+        rhs: IrValueId,
+    },
+    Zext {
+        from_ty: IrTy,
+        value: IrValueId,
+        to_ty: IrTy,
+    },
+    Call {
+        callee: DefId,
+        ret_ty: IrTy,
+        args: Vec<(IrTy, IrValueId)>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum QuadOp {
-    Alloca,
+pub enum IrBinaryOp {
     Add,
     Sub,
     Mul,
-    Div,
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
-    Load,
-    Store,
-    Gep,
-    Arg,
-    Call(DefId),
+    SDiv,
 }
 
-impl QuadOp {
-    pub fn from_binary(op: BinaryOp) -> Self {
+impl IrBinaryOp {
+    pub fn from_binary(op: BinaryOp) -> Option<Self> {
         match op {
-            BinaryOp::Add => Self::Add,
-            BinaryOp::Sub => Self::Sub,
-            BinaryOp::Mul => Self::Mul,
-            BinaryOp::Div => Self::Div,
-            BinaryOp::Eq => Self::Eq,
-            BinaryOp::Ne => Self::Ne,
-            BinaryOp::Lt => Self::Lt,
-            BinaryOp::Le => Self::Le,
-            BinaryOp::Gt => Self::Gt,
-            BinaryOp::Ge => Self::Ge,
+            BinaryOp::Add => Some(Self::Add),
+            BinaryOp::Sub => Some(Self::Sub),
+            BinaryOp::Mul => Some(Self::Mul),
+            BinaryOp::Div => Some(Self::SDiv),
+            BinaryOp::Eq
+            | BinaryOp::Ne
+            | BinaryOp::Lt
+            | BinaryOp::Le
+            | BinaryOp::Gt
+            | BinaryOp::Ge => None,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Terminator {
-    Goto(IrBlockId),
-    If {
-        cond: IrOperand,
+pub enum IrIcmpPred {
+    Eq,
+    Ne,
+    Slt,
+    Sle,
+    Sgt,
+    Sge,
+}
+
+impl IrIcmpPred {
+    pub fn from_binary(op: BinaryOp) -> Option<Self> {
+        match op {
+            BinaryOp::Eq => Some(Self::Eq),
+            BinaryOp::Ne => Some(Self::Ne),
+            BinaryOp::Lt => Some(Self::Slt),
+            BinaryOp::Le => Some(Self::Sle),
+            BinaryOp::Gt => Some(Self::Sgt),
+            BinaryOp::Ge => Some(Self::Sge),
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IrTerminator {
+    Br {
+        target: IrBlockId,
+    },
+    CondBr {
+        cond: IrValueId,
         then_bb: IrBlockId,
         else_bb: IrBlockId,
     },
-    Return(Option<IrOperand>),
+    Ret {
+        ty: IrTy,
+        value: Option<IrValueId>,
+    },
     Unreachable,
 }

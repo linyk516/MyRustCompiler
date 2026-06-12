@@ -5,10 +5,10 @@ pub struct IrFunctionId(pub usize);
 pub struct IrBlockId(pub usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct IrLocalId(pub usize);
+pub struct IrSlotId(pub usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct IrTempId(pub usize);
+pub struct IrValueId(pub usize);
 
 macro_rules! impl_id_from_usize {
     ($($id:ident),+ $(,)?) => {
@@ -34,4 +34,4 @@ macro_rules! impl_id_from_usize {
     };
 }
 
-impl_id_from_usize!(IrFunctionId, IrBlockId, IrLocalId, IrTempId);
+impl_id_from_usize!(IrFunctionId, IrBlockId, IrSlotId, IrValueId);
