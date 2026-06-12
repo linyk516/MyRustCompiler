@@ -76,6 +76,7 @@ fn single_fn_hir(
             span: span(),
         }],
         ret_ty,
+        variadic: false,
     };
 
     let item = hir.alloc_item(HirItem {
@@ -174,6 +175,7 @@ where
             sig: HirFnSig {
                 params: hir_params,
                 ret_ty,
+                variadic: false,
             },
             body,
         }),
@@ -229,7 +231,7 @@ fn typeck_ctx_collects_function_signature_and_param_type() {
 
     assert_eq!(output.tys.kind(local_ty), &TyKind::Int);
     match output.tys.kind(def_ty) {
-        TyKind::Fn { params, ret } => {
+        TyKind::Fn { params, ret, .. } => {
             assert_eq!(params.len(), 1);
             assert_eq!(output.tys.kind(params[0]), &TyKind::Int);
             assert_eq!(output.tys.kind(*ret), &TyKind::Unit);
@@ -941,10 +943,12 @@ fn composite_types_are_interned_by_structure() {
     let fn_a = tys.intern(TyKind::Fn {
         params: vec![array_a],
         ret: unit,
+        variadic: false,
     });
     let fn_b = tys.intern(TyKind::Fn {
         params: vec![array_b],
         ret: unit,
+        variadic: false,
     });
 
     assert_eq!(tuple_a, tuple_b);
@@ -1152,10 +1156,12 @@ fn unify_fn_types_unifies_params_and_return() {
     let fn_var = tys.intern(TyKind::Fn {
         params: vec![param_var],
         ret: ret_var,
+        variadic: false,
     });
     let fn_concrete = tys.intern(TyKind::Fn {
         params: vec![int],
         ret: unit,
+        variadic: false,
     });
 
     let unified = infer.unify(&mut tys, fn_var, fn_concrete).unwrap();

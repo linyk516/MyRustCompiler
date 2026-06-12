@@ -4,8 +4,8 @@ use crate::{
     ast::{
         node::{AstNode, NodeIdAllocator},
         ty::{
-            BinaryOp, Block, BlockKind, ElseBranch, Expr, ExprKind, FnDecl, Ident, Item, ItemKind,
-            Param, Place, PlaceKind, Program, Stmt,
+            BinaryOp, Block, BlockKind, ElseBranch, Expr, ExprKind, ExternFnDecl, FnDecl, FnSig,
+            Ident, Item, ItemKind, Param, Place, PlaceKind, Program, Stmt,
             StmtKind::{self},
             Ty, TyKind,
         },
@@ -37,13 +37,6 @@ pub struct LowerError {
 }
 
 pub type LowerResult<T> = Result<T, LowerError>;
-
-/// 函数头
-struct FnSig {
-    name: Ident,
-    params: Vec<Param>,
-    ret_ty: Option<Ty>,
-}
 
 /// 变量定义
 struct VarDecl {
@@ -110,7 +103,12 @@ impl<'a> Lowerer<'a> {
                 let item = ItemKind::Fn(self.lower_fn_decl(fn_decl_node)?);
                 Ok(self.make_item(item, span))
             }
-            _ => Err(self.unexpected_tag(node, "FnDecl")),
+            ProdTag::DeclExternFnDecl => {
+                let [extern_fn_decl_node] = self.expect_children::<1>(node)?;
+                let item = ItemKind::ExternFn(self.lower_extern_fn_decl(extern_fn_decl_node)?);
+                Ok(self.make_item(item, span))
+            }
+            _ => Err(self.unexpected_tag(node, "FnDecl, ExternFnDecl")),
         }
     }
 
@@ -123,13 +121,49 @@ impl<'a> Lowerer<'a> {
                 let fn_sig = self.lower_fn_sig(fn_sig_node)?;
                 let block = self.lower_block(block_node)?;
                 Ok(FnDecl {
-                    name: fn_sig.name,
-                    params: fn_sig.params,
-                    ret_ty: fn_sig.ret_ty,
+                    sig: fn_sig,
                     body: block,
                 })
             }
             _ => Err(self.unexpected_tag(node, "Sig Block, Sig BlockExpr")),
+        }
+    }
+
+    fn lower_extern_fn_decl(&mut self, node: CSTNodeID) -> LowerResult<ExternFnDecl> {
+        let tag = self.get_prod_tag(node)?;
+
+        match tag {
+            ProdTag::ExternFnDeclNoRet => {
+                let [_, _, id_node, _, param_list_node, _, _] = self.expect_children::<7>(node)?;
+                let (params, variadic) = self.lower_extern_param_list(param_list_node)?;
+                let name = self.lower_ident(id_node)?;
+
+                Ok(ExternFnDecl {
+                    sig: FnSig {
+                        name,
+                        params,
+                        ret_ty: None,
+                        variadic,
+                    },
+                })
+            }
+            ProdTag::ExternFnDeclRetTy => {
+                let [_, _, id_node, _, param_list_node, _, _, ty_node, _] =
+                    self.expect_children::<9>(node)?;
+                let (params, variadic) = self.lower_extern_param_list(param_list_node)?;
+                let name = self.lower_ident(id_node)?;
+                let ret_ty = self.lower_ty(ty_node)?;
+
+                Ok(ExternFnDecl {
+                    sig: FnSig {
+                        name,
+                        params,
+                        ret_ty: Some(ret_ty),
+                        variadic,
+                    },
+                })
+            }
+            _ => Err(self.unexpected_tag(node, "ExternFnDeclNoRet, ExternFnDeclRetTy")),
         }
     }
 
@@ -147,6 +181,7 @@ impl<'a> Lowerer<'a> {
                     name,
                     params: param_list,
                     ret_ty: None,
+                    variadic: false,
                 })
             }
             ProdTag::FnSigRetTy => {
@@ -161,6 +196,7 @@ impl<'a> Lowerer<'a> {
                     name,
                     params: param_list,
                     ret_ty: Some(ty),
+                    variadic: false,
                 })
             }
             _ => Err(self.unexpected_tag(node, "FnSigNoRet, FnSigRetTy")),
@@ -190,6 +226,38 @@ impl<'a> Lowerer<'a> {
         }
 
         Ok(param_list)
+    }
+
+    fn lower_extern_param_list(&mut self, node: CSTNodeID) -> LowerResult<(Vec<Param>, bool)> {
+        let mut params = vec![];
+        let mut cur_node = node;
+        let mut variadic = false;
+
+        loop {
+            let tag = self.get_prod_tag(cur_node)?;
+            match tag {
+                ProdTag::ExternParamListEmpty => break,
+                ProdTag::ExternParamListVariadic => {
+                    variadic = true;
+                    break;
+                }
+                ProdTag::ExternParamListParam => {
+                    let [param_node] = self.expect_children::<1>(cur_node)?;
+                    params.push(self.lower_param(param_node)?);
+                    break;
+                }
+                ProdTag::ExternParamListParamList => {
+                    let [param_node, _, next_node] = self.expect_children::<3>(cur_node)?;
+                    params.push(self.lower_param(param_node)?);
+                    cur_node = next_node;
+                }
+                _ => {
+                    return Err(self.unexpected_tag(cur_node, "Empty, Param, ParamList, Variadic"));
+                }
+            };
+        }
+
+        Ok((params, variadic))
     }
 
     fn lower_param(&mut self, node: CSTNodeID) -> LowerResult<Param> {
@@ -611,6 +679,12 @@ impl<'a> Lowerer<'a> {
 
                 self.lower_num(num_node)
             }
+            ProdTag::FactorString => {
+                let [literal_string_node] = self.expect_children::<1>(node)?;
+                let value = self.lower_string_literal(literal_string_node)?;
+
+                Ok(self.make_expr(ExprKind::String(value), span))
+            }
             ProdTag::FactorLVal => {
                 let [l_val_node] = self.expect_children::<1>(node)?;
 
@@ -631,8 +705,53 @@ impl<'a> Lowerer<'a> {
 
                 Ok(self.make_expr(kind, span))
             }
-            _ => return Err(self.unexpected_tag(node, "Num, LVal, GroupedExpr, Call")),
+            _ => return Err(self.unexpected_tag(node, "Num, String, LVal, GroupedExpr, Call")),
         }
+    }
+
+    fn lower_string_literal(&mut self, node: CSTNodeID) -> LowerResult<String> {
+        let raw = self.get_token_text(node)?;
+        let span = self.get_node_span(node);
+        let Some(inner) = raw
+            .strip_prefix('"')
+            .and_then(|text| text.strip_suffix('"'))
+        else {
+            return Err(LowerError {
+                message: format!("Invalid string literal: {raw}."),
+                span,
+            });
+        };
+
+        let mut chars = inner.chars();
+        let mut value = String::new();
+        while let Some(ch) = chars.next() {
+            if ch != '\\' {
+                value.push(ch);
+                continue;
+            }
+
+            let Some(escaped) = chars.next() else {
+                return Err(LowerError {
+                    message: "String literal ends with an incomplete escape.".into(),
+                    span,
+                });
+            };
+            match escaped {
+                'n' => value.push('\n'),
+                't' => value.push('\t'),
+                '\\' => value.push('\\'),
+                '"' => value.push('"'),
+                '0' => value.push('\0'),
+                _ => {
+                    return Err(LowerError {
+                        message: format!("Invalid string escape: \\{escaped}."),
+                        span,
+                    });
+                }
+            }
+        }
+
+        Ok(value)
     }
 
     fn lower_arg_list(&mut self, node: CSTNodeID) -> LowerResult<Vec<Expr>> {
@@ -1054,6 +1173,7 @@ impl<'a> Lowerer<'a> {
 
         match tag {
             ProdTag::TyI32 => Ok(self.make_ty(TyKind::I32, span)),
+            ProdTag::TyStr => Ok(self.make_ty(TyKind::Str, span)),
             ProdTag::TyArray => {
                 let [_, ty_node, _, num_node, _] = self.expect_children(node)?;
 
@@ -1105,7 +1225,7 @@ impl<'a> Lowerer<'a> {
 
                 Ok(self.make_ty(kind, span))
             }
-            _ => return Err(self.unexpected_tag(node, "I32, Array, Ref, RefMut, Tuple")),
+            _ => return Err(self.unexpected_tag(node, "I32, Str, Array, Ref, RefMut, Tuple")),
         }
     }
 

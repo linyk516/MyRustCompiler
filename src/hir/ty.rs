@@ -9,6 +9,7 @@ pub struct HirTy {
 #[derive(Debug, Clone)]
 pub enum HirTyKind {
     I32,
+    Str,
     Unit,
     Ref { mutable: bool, inner: Box<HirTy> },
 

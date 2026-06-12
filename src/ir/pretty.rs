@@ -56,8 +56,51 @@ impl<'a> IrDumper<'a> {
 
     fn program(&mut self) {
         self.line(0, "; LLVM-like IR");
+
+        for string in &self.program.global_strings {
+            self.line(
+                0,
+                format!(
+                    "@{} = private unnamed_addr constant [{} x i8] c\"{}\"",
+                    string.name,
+                    string.bytes.len(),
+                    llvm_escape_bytes(&string.bytes)
+                ),
+            );
+        }
+
+        if !self.program.global_strings.is_empty() && !self.program.extern_functions.is_empty() {
+            self.line(0, "");
+        }
+
+        for function in &self.program.extern_functions {
+            let mut params = function
+                .params
+                .iter()
+                .map(|ty| self.ty_text(ty))
+                .collect::<Vec<_>>();
+            if function.variadic {
+                params.push("...".to_string());
+            }
+            self.line(
+                0,
+                format!(
+                    "declare {} @{}({})",
+                    self.ty_text(&function.ret_ty),
+                    function.symbol_name,
+                    params.join(", ")
+                ),
+            );
+        }
+
+        if !self.program.extern_functions.is_empty() && !self.program.functions.is_empty() {
+            self.line(0, "");
+        }
+
         if self.program.functions.is_empty() {
-            self.line(0, "; <empty>");
+            if self.program.extern_functions.is_empty() && self.program.global_strings.is_empty() {
+                self.line(0, "; <empty>");
+            }
             return;
         }
 
@@ -196,6 +239,8 @@ impl<'a> IrDumper<'a> {
             IrInstrKind::Call {
                 callee,
                 ret_ty,
+                param_tys,
+                variadic,
                 args,
             } => {
                 let args = args
@@ -205,13 +250,29 @@ impl<'a> IrDumper<'a> {
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!(
-                    "{}call {} @{}({})",
-                    result,
-                    self.ty_text(ret_ty),
-                    self.callee_text(*callee),
-                    args
-                )
+                if *variadic {
+                    let mut params = param_tys
+                        .iter()
+                        .map(|ty| self.ty_text(ty))
+                        .collect::<Vec<_>>();
+                    params.push("...".to_string());
+                    format!(
+                        "{}call {} ({}) @{}({})",
+                        result,
+                        self.ty_text(ret_ty),
+                        params.join(", "),
+                        self.callee_text(*callee),
+                        args
+                    )
+                } else {
+                    format!(
+                        "{}call {} @{}({})",
+                        result,
+                        self.ty_text(ret_ty),
+                        self.callee_text(*callee),
+                        args
+                    )
+                }
             }
         };
 
@@ -253,6 +314,11 @@ impl<'a> IrDumper<'a> {
         match &value.kind {
             IrValueKind::ConstInt(value) => value.to_string(),
             IrValueKind::Unit => "void".to_string(),
+            IrValueKind::GlobalStringAddr(id) => self
+                .program
+                .global_string(*id)
+                .map(|string| format!("@{}", string.name))
+                .unwrap_or_else(|| format!("@.missing{}", id.index())),
             IrValueKind::Param(_) | IrValueKind::SlotAddr(_) | IrValueKind::InstrResult => value
                 .name
                 .clone()
@@ -267,6 +333,13 @@ impl<'a> IrDumper<'a> {
             .get(&callee)
             .and_then(|id| self.program.function(*id))
             .map(|function| function.symbol_name.clone())
+            .or_else(|| {
+                self.program
+                    .extern_function_map
+                    .get(&callee)
+                    .and_then(|id| self.program.extern_function(*id))
+                    .map(|function| function.symbol_name.clone())
+            })
             .unwrap_or_else(|| format!("fn{}", callee.index()))
     }
 
@@ -280,6 +353,7 @@ impl<'a> IrDumper<'a> {
     fn ty_text(&self, ty: &IrTy) -> String {
         match ty {
             IrTy::I1 => "i1".to_string(),
+            IrTy::I8 => "i8".to_string(),
             IrTy::I32 => "i32".to_string(),
             IrTy::Void => "void".to_string(),
             IrTy::Ptr => "ptr".to_string(),
@@ -315,4 +389,22 @@ impl<'a> IrDumper<'a> {
             IrIcmpPred::Sge => "sge",
         }
     }
+}
+
+fn llvm_escape_bytes(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    for &byte in bytes {
+        match byte {
+            b'\\' => out.push_str("\\5C"),
+            b'"' => out.push_str("\\22"),
+            b'\n' => out.push_str("\\0A"),
+            b'\t' => out.push_str("\\09"),
+            0 => out.push_str("\\00"),
+            0x20..=0x7e => out.push(byte as char),
+            _ => {
+                let _ = write!(out, "\\{byte:02X}");
+            }
+        }
+    }
+    out
 }

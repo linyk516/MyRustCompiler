@@ -2,6 +2,12 @@
 pub struct IrFunctionId(pub usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct IrExternalFunctionId(pub usize);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct IrGlobalStringId(pub usize);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IrBlockId(pub usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -34,4 +40,11 @@ macro_rules! impl_id_from_usize {
     };
 }
 
-impl_id_from_usize!(IrFunctionId, IrBlockId, IrSlotId, IrValueId);
+impl_id_from_usize!(
+    IrFunctionId,
+    IrExternalFunctionId,
+    IrGlobalStringId,
+    IrBlockId,
+    IrSlotId,
+    IrValueId
+);

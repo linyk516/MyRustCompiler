@@ -10,4 +10,6 @@ pub struct LexError {
 pub enum LexErrorKind {
     UnknownCharacter(char),
     UnterminatedBlockComment,
+    UnterminatedStringLiteral,
+    InvalidStringEscape(char),
 }

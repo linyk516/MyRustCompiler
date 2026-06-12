@@ -49,6 +49,8 @@ pub enum KeywordKind {
     Loop,
     Break,
     Continue,
+    Extern,
+    Str,
 }
 
 impl KeywordKind {
@@ -67,6 +69,8 @@ impl KeywordKind {
             "loop" => Some(KeywordKind::Loop),
             "break" => Some(KeywordKind::Break),
             "continue" => Some(KeywordKind::Continue),
+            "extern" => Some(KeywordKind::Extern),
+            "str" => Some(KeywordKind::Str),
             _ => None,
         }
     }
@@ -76,6 +80,7 @@ impl KeywordKind {
 #[derive(Debug, PartialEq, Clone)]
 pub enum LiteralKind {
     Int32,
+    String,
 }
 
 /// 运算符号枚举类
@@ -160,9 +165,10 @@ impl SeparatorKind {
 /// 特殊类型枚举类
 #[derive(Debug, PartialEq, Clone)]
 pub enum SpecialKind {
-    Arrow,  // ->
-    Dot,    // .
-    DotDot, // ..
+    Arrow,    // ->
+    Dot,      // .
+    DotDot,   // ..
+    Ellipsis, // ...
 }
 
 impl SpecialKind {
@@ -171,6 +177,7 @@ impl SpecialKind {
             "->" => Some(SpecialKind::Arrow),
             "." => Some(SpecialKind::Dot),
             ".." => Some(SpecialKind::DotDot),
+            "..." => Some(SpecialKind::Ellipsis),
             _ => None,
         }
     }

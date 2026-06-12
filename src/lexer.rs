@@ -43,6 +43,9 @@ impl Lexer<'_> {
                     },
                 });
             }
+            if ch == '"' {
+                return self.lex_string_literal();
+            }
             let token = self
                 .lex_special()
                 .or_else(|| self.lex_ident_or_keyword())
@@ -72,6 +75,65 @@ impl Lexer<'_> {
                 },
             })
         }
+    }
+
+    /// 解析字符串字面量，支持少量 C/Rust 风格转义。
+    fn lex_string_literal(&mut self) -> Result<Token, LexError> {
+        let start = self.cursor.pos();
+        self.cursor.bump();
+
+        while let Some(ch) = self.cursor.bump() {
+            match ch {
+                '"' => {
+                    return Ok(Token {
+                        kind: TokenKind::Literal(token::LiteralKind::String),
+                        span: token::Span {
+                            start,
+                            end: self.cursor.pos(),
+                        },
+                    });
+                }
+                '\\' => {
+                    let escape_start = self.cursor.pos() - ch.len_utf8();
+                    let Some(escaped) = self.cursor.bump() else {
+                        return Err(LexError {
+                            kind: LexErrorKind::UnterminatedStringLiteral,
+                            span: token::Span {
+                                start,
+                                end: self.cursor.pos(),
+                            },
+                        });
+                    };
+                    if !matches!(escaped, 'n' | 't' | '\\' | '"' | '0') {
+                        return Err(LexError {
+                            kind: LexErrorKind::InvalidStringEscape(escaped),
+                            span: token::Span {
+                                start: escape_start,
+                                end: self.cursor.pos(),
+                            },
+                        });
+                    }
+                }
+                '\n' | '\r' => {
+                    return Err(LexError {
+                        kind: LexErrorKind::UnterminatedStringLiteral,
+                        span: token::Span {
+                            start,
+                            end: self.cursor.pos(),
+                        },
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        Err(LexError {
+            kind: LexErrorKind::UnterminatedStringLiteral,
+            span: token::Span {
+                start,
+                end: self.cursor.pos(),
+            },
+        })
     }
 
     fn lex_one_or_two_char_token(
@@ -297,6 +359,28 @@ impl Lexer<'_> {
 
     /// 解析特殊字符，应该优先进行
     fn lex_special(&mut self) -> Option<Token> {
+        let start = self.cursor.pos();
+        if self.cursor.peek() == Some('.') && self.cursor.peek_next() == Some('.') {
+            self.cursor.bump();
+            self.cursor.bump();
+            if self.cursor.peek() == Some('.') {
+                self.cursor.bump();
+                return Some(Token {
+                    kind: TokenKind::Special(token::SpecialKind::Ellipsis),
+                    span: token::Span {
+                        start,
+                        end: self.cursor.pos(),
+                    },
+                });
+            }
+            return Some(Token {
+                kind: TokenKind::Special(token::SpecialKind::DotDot),
+                span: token::Span {
+                    start,
+                    end: self.cursor.pos(),
+                },
+            });
+        }
         self.lex_one_or_two_char_token(SPECIAL_FIRST_CH, |text| {
             if let Some(special) = token::SpecialKind::from_str(text) {
                 Some(TokenKind::Special(special))

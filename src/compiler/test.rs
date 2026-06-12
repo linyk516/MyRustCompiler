@@ -400,6 +400,31 @@ fn cli_renderer_prints_ir_when_enabled() {
 }
 
 #[test]
+fn cli_renderer_prints_extern_printf_ir_when_enabled() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new(
+        r#"
+        extern fn printf(fmt:str, ...) -> i32;
+
+        fn main() -> i32 {
+            printf("answer = %d\n", 42);
+            return 0;
+        }
+        "#,
+    );
+    let outcome = compiler.compile(source);
+    let renderer = CliRenderer::new(RenderConfig::new(false).with_show_ir(true));
+
+    let rendered = renderer.render_outcome(&compiler, &outcome);
+
+    assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+    assert!(rendered.stdout.contains("IR"));
+    assert!(rendered.stdout.contains("declare i32 @printf(ptr, ...)"));
+    assert!(rendered.stdout.contains("call i32 (ptr, ...) @printf"));
+    assert!(rendered.stdout.contains("@.str.0"));
+}
+
+#[test]
 fn cli_renderer_prints_ir_unavailable_when_typecheck_failed() {
     let compiler = Compiler::build(false).expect("compiler should build");
     let source = SourceFile::new("fn main() -> i32 {}");

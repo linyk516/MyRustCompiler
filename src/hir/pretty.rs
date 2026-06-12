@@ -191,6 +191,41 @@ impl<'a> HirDumper<'a> {
                 );
                 self.body(hir_fn.body, indent + 1);
             }
+            HirItemKind::ExternFn(hir_fn) => {
+                self.line(
+                    indent,
+                    format!(
+                        "ExternFnItem {:?} {}",
+                        item.def_id,
+                        self.def_text(item.def_id)
+                    ),
+                );
+                self.line(indent + 1, format!("Name {}", hir_fn.name));
+                if !hir_fn.sig.params.is_empty() {
+                    self.line(indent + 1, "SigParams");
+                    for param in &hir_fn.sig.params {
+                        let mut text = String::from("Param ");
+                        if param.mutable {
+                            text.push_str("mut ");
+                        }
+                        let _ = write!(
+                            text,
+                            "{} {:?}: {}",
+                            param.name,
+                            param.local_id,
+                            self.ty_text(&param.ty)
+                        );
+                        self.line(indent + 2, text);
+                    }
+                }
+                if hir_fn.sig.variadic {
+                    self.line(indent + 1, "Variadic");
+                }
+                self.line(
+                    indent + 1,
+                    format!("Return {}", self.ty_text(&hir_fn.sig.ret_ty)),
+                );
+            }
         }
     }
 
@@ -289,6 +324,9 @@ impl<'a> HirDumper<'a> {
     fn expr_kind(&mut self, kind: &HirExprKind, indent: usize) {
         match kind {
             HirExprKind::Int(value) => self.line(indent, format!("Int {value}")),
+            HirExprKind::String(value) => {
+                self.line(indent, format!("String \"{}\"", escape_string(value)))
+            }
             HirExprKind::Path(res) => self.line(indent, format!("Path {}", self.res_text(*res))),
             HirExprKind::Binary { op, lhs, rhs } => {
                 self.line(indent, format!("Binary {}", self.binary_op(op)));
@@ -457,6 +495,7 @@ impl<'a> HirDumper<'a> {
     fn ty_text(&self, ty: &HirTy) -> String {
         match &ty.kind {
             HirTyKind::I32 => "i32".to_string(),
+            HirTyKind::Str => "str".to_string(),
             HirTyKind::Unit => "()".to_string(),
             HirTyKind::Ref { mutable, inner } => {
                 if *mutable {
@@ -502,4 +541,19 @@ impl<'a> HirDumper<'a> {
     fn span_text(&self, span: &crate::lexer::token::Span) -> String {
         format!("[{}..{})", span.start, span.end)
     }
+}
+
+fn escape_string(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.chars() {
+        match ch {
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\0' => out.push_str("\\0"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }

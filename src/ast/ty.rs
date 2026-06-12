@@ -10,6 +10,7 @@ pub type Ty = AstNode<TyKind>;
 #[derive(Debug, Clone)]
 pub enum TyKind {
     I32,
+    Str,
     Ref { mutable: bool, inner: Box<Ty> },
     Array { elem: Box<Ty>, len: usize },
     Tuple(Vec<Ty>),
@@ -38,16 +39,28 @@ pub struct Program {
 #[derive(Debug, Clone)]
 pub enum ItemKind {
     Fn(FnDecl),
+    ExternFn(ExternFnDecl),
 }
 
 pub type Item = AstNode<ItemKind>;
 
 #[derive(Debug, Clone)]
 pub struct FnDecl {
+    pub sig: FnSig,
+    pub body: Block,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternFnDecl {
+    pub sig: FnSig,
+}
+
+#[derive(Debug, Clone)]
+pub struct FnSig {
     pub name: Ident,
     pub params: Vec<Param>,
     pub ret_ty: Option<Ty>,
-    pub body: Block,
+    pub variadic: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -129,6 +142,7 @@ pub type Expr = AstNode<ExprKind>;
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     Int(i32),
+    String(String),
 
     Place(Place),
 

@@ -6,15 +6,26 @@ pub type TyVarId = usize;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TyKind {
     Int,
+    Str,
     Unit,
     Never,
 
     Tuple(Vec<TyId>),
-    Array { elem: TyId, len: usize },
+    Array {
+        elem: TyId,
+        len: usize,
+    },
 
-    Ref { mutable: bool, inner: TyId },
+    Ref {
+        mutable: bool,
+        inner: TyId,
+    },
 
-    Fn { params: Vec<TyId>, ret: TyId },
+    Fn {
+        params: Vec<TyId>,
+        ret: TyId,
+        variadic: bool,
+    },
 
     Infer(TyVarId),
     Error,
@@ -57,6 +68,10 @@ impl TyStore {
 
     pub fn unit(&mut self) -> TyId {
         self.intern(TyKind::Unit)
+    }
+
+    pub fn str(&mut self) -> TyId {
+        self.intern(TyKind::Str)
     }
 
     pub fn never(&mut self) -> TyId {

@@ -93,6 +93,10 @@ pub enum DiagnosticDetails {
         ch: char,
     },
     LexUnterminatedBlockComment,
+    LexUnterminatedStringLiteral,
+    LexInvalidStringEscape {
+        ch: char,
+    },
     ParseUnexpectedToken {
         state: usize,
         found: Option<DiagnosticToken>,
@@ -247,6 +251,26 @@ impl Diagnostic {
             .help("add a closing `*/`")
             .note("block comments support nesting")
             .label(span, range, "block comment starts here", true),
+            LexErrorKind::UnterminatedStringLiteral => Self::error(
+                DiagnosticStage::Lexer,
+                DiagnosticCategory::UserInput,
+                "E0003",
+                "unterminated string literal",
+                source,
+                DiagnosticDetails::LexUnterminatedStringLiteral,
+            )
+            .help("add a closing `\"`")
+            .label(span, range, "string literal starts here", true),
+            LexErrorKind::InvalidStringEscape(ch) => Self::error(
+                DiagnosticStage::Lexer,
+                DiagnosticCategory::UserInput,
+                "E0004",
+                "invalid string escape",
+                source,
+                DiagnosticDetails::LexInvalidStringEscape { ch: *ch },
+            )
+            .help("supported escapes are `\\n`, `\\t`, `\\\\`, `\\\"`, and `\\0`")
+            .label(span, range, format!("invalid escape `\\{}`", ch), true),
         }
     }
 
@@ -559,6 +583,36 @@ impl Diagnostic {
                 format!("expected {expected} arguments, found {actual}"),
                 true,
             ),
+            TypeErrorKind::WrongVariadicArgCount {
+                expected_at_least,
+                actual,
+            } => Self::type_error(
+                "E0415",
+                "wrong number of function arguments",
+                source,
+                format!("expected at least {expected_at_least} arguments, found {actual}"),
+            )
+            .label(
+                span,
+                range,
+                format!("expected at least {expected_at_least} arguments, found {actual}"),
+                true,
+            ),
+            TypeErrorKind::InvalidVariadicArgType { ty } => {
+                let ty_text = Self::type_text(*ty, tys);
+                Self::type_error(
+                    "E0416",
+                    "invalid variadic argument type",
+                    source,
+                    format!("type `{ty_text}` cannot be passed as a C variadic argument"),
+                )
+                .label(
+                    span,
+                    range,
+                    format!("`{ty_text}` is not supported as a variadic argument"),
+                    true,
+                )
+            }
             TypeErrorKind::InvalidIndex { base, index } => {
                 let base_text = Self::type_text(*base, tys);
                 let index_text = Self::type_text(*index, tys);
@@ -862,6 +916,7 @@ impl Diagnostic {
     fn type_text(ty: TyId, tys: &TyStore) -> String {
         match tys.kind(ty) {
             TyKind::Int => "i32".to_string(),
+            TyKind::Str => "str".to_string(),
             TyKind::Unit => "()".to_string(),
             TyKind::Never => "!".to_string(),
             TyKind::Tuple(elems) => {
@@ -882,12 +937,19 @@ impl Diagnostic {
                     format!("&{}", Self::type_text(*inner, tys))
                 }
             }
-            TyKind::Fn { params, ret } => {
-                let params = params
+            TyKind::Fn {
+                params,
+                ret,
+                variadic,
+            } => {
+                let mut params = params
                     .iter()
                     .map(|&param| Self::type_text(param, tys))
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                    .collect::<Vec<_>>();
+                if *variadic {
+                    params.push("...".to_string());
+                }
+                let params = params.join(", ");
                 format!("fn({params}) -> {}", Self::type_text(*ret, tys))
             }
             TyKind::Infer(var) => format!("?T{}", var),

@@ -150,6 +150,7 @@ impl ThirExpr {
 #[derive(Debug, Clone)]
 pub enum ThirExprKind {
     Int(i32),
+    String(String),
     Use(ThirPlace),
     Binary {
         op: BinaryOp,

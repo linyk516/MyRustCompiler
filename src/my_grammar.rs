@@ -25,8 +25,11 @@ pub struct Terminals {
     pub loop_: TerminalId,
     pub break_: TerminalId,
     pub continue_: TerminalId,
+    pub extern_: TerminalId,
+    pub str_: TerminalId,
     pub ident: TerminalId,
     pub literal_i32: TerminalId,
+    pub literal_string: TerminalId,
     pub assignment: TerminalId,
     pub plus: TerminalId,
     pub minus: TerminalId,
@@ -51,6 +54,7 @@ pub struct Terminals {
     pub arrow: TerminalId,
     pub dot: TerminalId,
     pub dotdot: TerminalId,
+    pub ellipsis: TerminalId,
     pub eof: TerminalId,
 }
 
@@ -58,6 +62,7 @@ pub struct Terminals {
 pub enum ProdTag {
     VarAttrMut,
     TyI32,
+    TyStr,
     LValAddr,
     AddrAddrElem,
     AddrElemIdent,
@@ -65,8 +70,15 @@ pub enum ProdTag {
     DeclListEmpty,
     DeclListDeclDeclList,
     DeclFnDecl,
+    DeclExternFnDecl,
     FnDeclSigBlock,
+    ExternFnDeclNoRet,
+    ExternFnDeclRetTy,
     FnSigNoRet,
+    ExternParamListEmpty,
+    ExternParamListParam,
+    ExternParamListParamList,
+    ExternParamListVariadic,
     ParamListEmpty,
     BlockStmtList,
     StmtListEmpty,
@@ -92,6 +104,7 @@ pub enum ProdTag {
     AddExprTerm,
     TermFactor,
     FactorNum,
+    FactorString,
     NumLiteralI32,
     FactorLVal,
     FactorGroupedExpr,
@@ -233,12 +246,15 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     let loop_ = g.add_terminal("loop");
     let break_ = g.add_terminal("break");
     let continue_ = g.add_terminal("continue");
+    let extern_ = g.add_terminal("extern");
+    let str_ = g.add_terminal("str");
 
     // 标识符
     let ident = g.add_terminal("id");
 
     // 数值字面量
     let literal_i32 = g.add_terminal("literal_i32");
+    let literal_string = g.add_terminal("literal_string");
 
     // 赋值号
     let assignment = g.add_terminal("=");
@@ -273,6 +289,7 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     let arrow = g.add_terminal("->");
     let dot = g.add_terminal(".");
     let dotdot = g.add_terminal("..");
+    let ellipsis = g.add_terminal("...");
 
     // 文法
     /*
@@ -300,6 +317,7 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         ProdTag::VarAttrMut,
     );
     add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(i32_), ProdTag::TyI32);
+    add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(str_), ProdTag::TyStr);
     add_tagged_prod(&mut g, &mut prod_tags, l_val, rhs!(addr), ProdTag::LValAddr);
     add_tagged_prod(
         &mut g,
@@ -332,8 +350,10 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     let decl_list = g.add_non_terminal("decl_list");
     let decl = g.add_non_terminal("decl");
     let fn_decl = g.add_non_terminal("fn_decl");
+    let extern_fn_decl = g.add_non_terminal("extern_fn_decl");
     let fn_sig = g.add_non_terminal("fn_sig");
     let param_list = g.add_non_terminal("param_list");
+    let extern_param_list = g.add_non_terminal("extern_param_list");
     let block = g.add_non_terminal("block");
     let stmt_list = g.add_non_terminal("stmt_list");
 
@@ -368,6 +388,13 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     add_tagged_prod(
         &mut g,
         &mut prod_tags,
+        decl,
+        rhs!(extern_fn_decl),
+        ProdTag::DeclExternFnDecl,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
         fn_decl,
         rhs!(fn_sig, block),
         ProdTag::FnDeclSigBlock,
@@ -382,9 +409,48 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     add_tagged_prod(
         &mut g,
         &mut prod_tags,
+        extern_fn_decl,
+        rhs!(
+            extern_,
+            fn_,
+            ident,
+            l_paren,
+            extern_param_list,
+            r_paren,
+            semicolon
+        ),
+        ProdTag::ExternFnDeclNoRet,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        extern_fn_decl,
+        rhs!(
+            extern_,
+            fn_,
+            ident,
+            l_paren,
+            extern_param_list,
+            r_paren,
+            arrow,
+            ty,
+            semicolon
+        ),
+        ProdTag::ExternFnDeclRetTy,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
         param_list,
         rhs!(),
         ProdTag::ParamListEmpty,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        extern_param_list,
+        rhs!(),
+        ProdTag::ExternParamListEmpty,
     );
     add_tagged_prod(
         &mut g,
@@ -469,6 +535,27 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         param,
         rhs!(var_attr, ident, colon, ty),
         ProdTag::ParamVarAttrIdentTy,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        extern_param_list,
+        rhs!(param),
+        ProdTag::ExternParamListParam,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        extern_param_list,
+        rhs!(param, comma, extern_param_list),
+        ProdTag::ExternParamListParamList,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        extern_param_list,
+        rhs!(ellipsis),
+        ProdTag::ExternParamListVariadic,
     );
 
     /*
@@ -624,6 +711,13 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         factor,
         rhs!(num),
         ProdTag::FactorNum,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        factor,
+        rhs!(literal_string),
+        ProdTag::FactorString,
     );
     add_tagged_prod(
         &mut g,
@@ -1270,8 +1364,11 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         loop_,
         break_,
         continue_,
+        extern_,
+        str_,
         ident,
         literal_i32,
+        literal_string,
         assignment,
         plus,
         minus,
@@ -1296,6 +1393,7 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         arrow,
         dot,
         dotdot,
+        ellipsis,
         eof,
     };
     let grammar = g.build()?;

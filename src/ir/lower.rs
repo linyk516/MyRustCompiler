@@ -2,13 +2,13 @@ use std::collections::HashMap;
 
 use crate::{
     ast::ty::BinaryOp,
-    hir::table::DefTable,
+    hir::table::{DefKind, DefTable},
     ir::{
         error::{IrLowerError, IrLowerErrorKind},
-        id::{IrBlockId, IrValueId},
+        id::{IrBlockId, IrGlobalStringId, IrValueId},
         node::{
-            IrBasicBlock, IrBinaryOp, IrFunction, IrIcmpPred, IrInstr, IrInstrKind, IrProgram,
-            IrSlot, IrTerminator, IrTy, IrValue, IrValueKind,
+            IrBasicBlock, IrBinaryOp, IrExternalFunction, IrFunction, IrGlobalString, IrIcmpPred,
+            IrInstr, IrInstrKind, IrProgram, IrSlot, IrTerminator, IrTy, IrValue, IrValueKind,
         },
         output::IrOutput,
     },
@@ -19,7 +19,10 @@ use crate::{
             ThirBlock, ThirBody, ThirExprKind, ThirPlace, ThirPlaceKind, ThirProgram, ThirStmtKind,
         },
     },
-    typecheck::ty::{TyId, TyKind, TyStore},
+    typecheck::{
+        result::TypeckResults,
+        ty::{TyId, TyKind, TyStore},
+    },
 };
 
 type IrLowerResult<T> = Result<T, IrLowerError>;
@@ -37,6 +40,7 @@ struct LoopContext {
 pub struct IrLowerCtx<'thir> {
     thir: &'thir ThirProgram,
     defs: &'thir DefTable,
+    typeck: &'thir TypeckResults,
     tys: &'thir TyStore,
 
     program: IrProgram,
@@ -44,10 +48,16 @@ pub struct IrLowerCtx<'thir> {
 }
 
 impl<'thir> IrLowerCtx<'thir> {
-    pub fn new(thir: &'thir ThirProgram, defs: &'thir DefTable, tys: &'thir TyStore) -> Self {
+    pub fn new(
+        thir: &'thir ThirProgram,
+        defs: &'thir DefTable,
+        typeck: &'thir TypeckResults,
+        tys: &'thir TyStore,
+    ) -> Self {
         Self {
             thir,
             defs,
+            typeck,
             tys,
             program: IrProgram::new(),
             errors: vec![],
@@ -63,6 +73,8 @@ impl<'thir> IrLowerCtx<'thir> {
     }
 
     fn lower_program(&mut self) {
+        self.collect_extern_functions();
+
         for index in 0..self.thir.bodies.len() {
             let body_id = ThirBodyId(index);
             match self.lower_function(body_id) {
@@ -75,7 +87,53 @@ impl<'thir> IrLowerCtx<'thir> {
         }
     }
 
-    fn lower_function(&self, body_id: ThirBodyId) -> IrLowerResult<IrFunction> {
+    fn collect_extern_functions(&mut self) {
+        for (index, def) in self.defs.defs.iter().enumerate() {
+            if def.kind != DefKind::ExternFn {
+                continue;
+            }
+
+            let owner = crate::hir::id::DefId(index);
+            let Some(fn_ty) = self.typeck.get_def_ty(owner).copied() else {
+                self.errors.push(self.error(
+                    IrLowerErrorKind::Internal {
+                        message: format!("extern function {owner:?} has no collected type"),
+                    },
+                    def.span.clone(),
+                ));
+                continue;
+            };
+
+            let TyKind::Fn {
+                params,
+                ret,
+                variadic,
+            } = self.tys.kind(fn_ty).clone()
+            else {
+                self.errors.push(self.error(
+                    IrLowerErrorKind::Internal {
+                        message: format!("extern definition {owner:?} is not a function type"),
+                    },
+                    def.span.clone(),
+                ));
+                continue;
+            };
+
+            let function = IrExternalFunction {
+                owner,
+                symbol_name: llvm_symbol_name(&def.name, owner),
+                params: params
+                    .into_iter()
+                    .map(|param| self.ir_ty_from_source_ty(param))
+                    .collect(),
+                ret_ty: self.ir_ty_from_source_ty(ret),
+                variadic,
+            };
+            self.program.alloc_extern_function(owner, function);
+        }
+    }
+
+    fn lower_function(&mut self, body_id: ThirBodyId) -> IrLowerResult<IrFunction> {
         let body = self.thir.body(body_id).ok_or_else(|| {
             self.error(
                 IrLowerErrorKind::MissingBody {
@@ -102,7 +160,15 @@ impl<'thir> IrLowerCtx<'thir> {
             .collect::<IrLowerResult<Vec<_>>>()?;
 
         let symbol_name = self.function_symbol_name(body.owner);
-        let lowerer = FunctionLowerer::new(self.tys, body, symbol_name, ret_ty, param_tys);
+        let lowerer = FunctionLowerer::new(
+            self.tys,
+            self.typeck,
+            &mut self.program.global_strings,
+            body,
+            symbol_name,
+            ret_ty,
+            param_tys,
+        );
         lowerer.lower()
     }
 
@@ -160,6 +226,8 @@ impl<'thir> IrLowerCtx<'thir> {
 
 struct FunctionLowerer<'a> {
     tys: &'a TyStore,
+    typeck: &'a TypeckResults,
+    global_strings: &'a mut Vec<IrGlobalString>,
     body: &'a ThirBody,
     builder: IrBuilder,
     local_map: HashMap<ThirLocalId, IrValueId>,
@@ -170,6 +238,8 @@ struct FunctionLowerer<'a> {
 impl<'a> FunctionLowerer<'a> {
     fn new(
         tys: &'a TyStore,
+        typeck: &'a TypeckResults,
+        global_strings: &'a mut Vec<IrGlobalString>,
         body: &'a ThirBody,
         symbol_name: String,
         ret_ty: IrTy,
@@ -177,6 +247,8 @@ impl<'a> FunctionLowerer<'a> {
     ) -> Self {
         Self {
             tys,
+            typeck,
+            global_strings,
             body,
             builder: IrBuilder::new(body.owner, symbol_name, ret_ty, param_tys),
             local_map: HashMap::new(),
@@ -315,6 +387,7 @@ impl<'a> FunctionLowerer<'a> {
 
         match kind {
             ThirExprKind::Int(value) => Ok(self.builder.const_int(value, IrTy::I32)),
+            ThirExprKind::String(value) => self.lower_string_value(value, span),
             ThirExprKind::Use(place) => self.load_place_value(&place, span),
             ThirExprKind::Binary { op, lhs, rhs } => {
                 self.lower_binary_expr(op, lhs, rhs, expr_ty, span)
@@ -329,9 +402,15 @@ impl<'a> FunctionLowerer<'a> {
                 }
 
                 let ret_ty = self.ir_ty(expr_ty);
-                let result =
-                    self.builder
-                        .emit_call(callee, ret_ty.clone(), lowered_args, span.clone())?;
+                let (param_tys, variadic) = self.callee_sig(callee)?;
+                let result = self.builder.emit_call(
+                    callee,
+                    ret_ty.clone(),
+                    param_tys,
+                    variadic,
+                    lowered_args,
+                    span.clone(),
+                )?;
                 Ok(result.unwrap_or_else(|| self.unit_value()))
             }
             ThirExprKind::Assign { target, value } => {
@@ -429,6 +508,55 @@ impl<'a> FunctionLowerer<'a> {
                 self.builder.emit_load(self.ir_ty(expr_ty), addr, span)
             }
         }
+    }
+
+    fn lower_string_value(&mut self, value: String, span: Span) -> IrLowerResult<IrValueId> {
+        let mut bytes = value.into_bytes();
+        bytes.push(0);
+        let id = IrGlobalStringId(self.global_strings.len());
+        let name = format!(".str.{}", id.index());
+        let len = bytes.len();
+        self.global_strings.push(IrGlobalString { name, bytes });
+
+        let base = self.builder.global_string_addr(id);
+        let zero_a = self.builder.const_int(0, IrTy::I32);
+        let zero_b = self.builder.const_int(0, IrTy::I32);
+        self.builder.emit_gep(
+            IrTy::Array {
+                elem: Box::new(IrTy::I8),
+                len,
+            },
+            base,
+            vec![zero_a, zero_b],
+            span,
+        )
+    }
+
+    fn callee_sig(&self, callee: crate::hir::id::DefId) -> IrLowerResult<(Vec<IrTy>, bool)> {
+        let Some(ty) = self.typeck.get_def_ty(callee).copied() else {
+            return Err(self.error(
+                IrLowerErrorKind::Internal {
+                    message: format!("callee {callee:?} has no collected type"),
+                },
+                Span::default(),
+            ));
+        };
+        let TyKind::Fn {
+            params, variadic, ..
+        } = self.tys.kind(ty).clone()
+        else {
+            return Err(self.error(
+                IrLowerErrorKind::Internal {
+                    message: format!("callee {callee:?} is not a function type"),
+                },
+                Span::default(),
+            ));
+        };
+
+        Ok((
+            params.into_iter().map(|param| self.ir_ty(param)).collect(),
+            variadic,
+        ))
     }
 
     fn lower_binary_expr(
@@ -1013,6 +1141,14 @@ impl IrBuilder {
         })
     }
 
+    fn global_string_addr(&mut self, id: IrGlobalStringId) -> IrValueId {
+        self.function.alloc_value(IrValue {
+            ty: IrTy::Ptr,
+            kind: IrValueKind::GlobalStringAddr(id),
+            name: None,
+        })
+    }
+
     fn emit_alloca_slot(
         &mut self,
         mut slot: IrSlot,
@@ -1131,6 +1267,8 @@ impl IrBuilder {
         &mut self,
         callee: crate::hir::id::DefId,
         ret_ty: IrTy,
+        param_tys: Vec<IrTy>,
+        variadic: bool,
         args: Vec<(IrTy, IrValueId)>,
         span: Span,
     ) -> IrLowerResult<Option<IrValueId>> {
@@ -1139,6 +1277,8 @@ impl IrBuilder {
                 IrInstrKind::Call {
                     callee,
                     ret_ty,
+                    param_tys,
+                    variadic,
                     args,
                 },
                 span,
@@ -1150,6 +1290,8 @@ impl IrBuilder {
                 IrInstrKind::Call {
                     callee,
                     ret_ty,
+                    param_tys,
+                    variadic,
                     args,
                 },
                 span,
@@ -1294,6 +1436,7 @@ impl IrBuilder {
 fn ir_ty_from_source_ty(tys: &TyStore, ty: TyId) -> IrTy {
     match tys.kind(ty) {
         TyKind::Int => IrTy::I32,
+        TyKind::Str => IrTy::Ptr,
         TyKind::Unit => IrTy::Void,
         TyKind::Never => IrTy::Void,
         TyKind::Tuple(elems) => IrTy::Struct(

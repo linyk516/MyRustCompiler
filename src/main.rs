@@ -9,6 +9,8 @@ use std::fmt;
 use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod ast;
 pub mod compiler;
@@ -40,6 +42,8 @@ struct Args {
     show_ir: bool,
     #[arg(long = "ll", default_value_t = false)]
     emit_ll: bool,
+    #[arg(short = 'o', value_name = "OUTPUT")]
+    output: Option<PathBuf>,
     #[arg(long, default_value_t = false)]
     color: bool,
     #[arg(long, default_value_t = false)]
@@ -90,6 +94,13 @@ fn main() {
             Err(error) => eprintln!("failed to emit LLVM IR: {error}"),
         }
     }
+
+    if let Some(output_path) = &args.output {
+        match emit_target_file(&outcome, output_path) {
+            Ok(path) => println!("Target written to {}", path.display()),
+            Err(error) => eprintln!("failed to emit target: {error}"),
+        }
+    }
 }
 
 fn normalize_ll_alias<I, T>(args: I) -> Vec<OsString>
@@ -111,6 +122,23 @@ where
 
 fn llvm_output_path(source_path: &Path) -> PathBuf {
     source_path.with_extension("ll")
+}
+
+fn target_temp_llvm_path(output_path: &Path) -> PathBuf {
+    let output_name = output_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("output");
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+
+    std::env::temp_dir().join(format!(
+        "my_rust_compiler_{output_name}_{}_{}.ll",
+        std::process::id(),
+        unique
+    ))
 }
 
 #[derive(Debug)]
@@ -136,18 +164,126 @@ impl fmt::Display for LlEmitError {
 }
 
 fn emit_llvm_ir_file(outcome: &CompileOutcome, source_path: &Path) -> Result<PathBuf, LlEmitError> {
+    let path = llvm_output_path(source_path);
+    emit_llvm_ir_to_path(outcome, &path)?;
+    Ok(path)
+}
+
+fn emit_llvm_ir_to_path(outcome: &CompileOutcome, path: &Path) -> Result<(), LlEmitError> {
     let ir = outcome
         .output
         .as_ref()
         .and_then(|output| output.ir())
         .ok_or(LlEmitError::IrUnavailable)?;
-    let path = llvm_output_path(source_path);
     let dump = IrDump::new(&ir.program).dump();
-    fs::write(&path, dump).map_err(|source| LlEmitError::WriteFailed {
-        path: path.clone(),
+    fs::write(path, dump).map_err(|source| LlEmitError::WriteFailed {
+        path: path.to_path_buf(),
         source,
     })?;
-    Ok(path)
+    Ok(())
+}
+
+#[derive(Debug)]
+enum TargetEmitError {
+    Ll(LlEmitError),
+    BackendNotFound,
+    BackendFailed {
+        program: PathBuf,
+        status: String,
+        stderr: String,
+    },
+    BackendLaunchFailed {
+        program: PathBuf,
+        source: std::io::Error,
+    },
+}
+
+impl fmt::Display for TargetEmitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TargetEmitError::Ll(error) => write!(f, "{error}"),
+            TargetEmitError::BackendNotFound => {
+                f.write_str("could not find clang; install LLVM/clang or put clang on PATH")
+            }
+            TargetEmitError::BackendFailed {
+                program,
+                status,
+                stderr,
+            } => {
+                if stderr.is_empty() {
+                    write!(f, "{} failed with status {status}", program.display())
+                } else {
+                    write!(
+                        f,
+                        "{} failed with status {status}: {stderr}",
+                        program.display()
+                    )
+                }
+            }
+            TargetEmitError::BackendLaunchFailed { program, source } => {
+                write!(f, "failed to run {}: {source}", program.display())
+            }
+        }
+    }
+}
+
+impl From<LlEmitError> for TargetEmitError {
+    fn from(error: LlEmitError) -> Self {
+        TargetEmitError::Ll(error)
+    }
+}
+
+fn emit_target_file(
+    outcome: &CompileOutcome,
+    output_path: &Path,
+) -> Result<PathBuf, TargetEmitError> {
+    let ll_path = target_temp_llvm_path(output_path);
+    emit_llvm_ir_to_path(outcome, &ll_path)?;
+
+    let result = link_llvm_ir_with_clang(&ll_path, output_path);
+    let _ = fs::remove_file(&ll_path);
+    result?;
+
+    Ok(output_path.to_path_buf())
+}
+
+fn clang_command_args(ll_path: &Path, output_path: &Path) -> Vec<OsString> {
+    vec![
+        ll_path.as_os_str().to_os_string(),
+        OsString::from("-o"),
+        output_path.as_os_str().to_os_string(),
+    ]
+}
+
+fn clang_candidates() -> [PathBuf; 3] {
+    [
+        PathBuf::from("clang"),
+        PathBuf::from("/opt/homebrew/bin/clang"),
+        PathBuf::from("/opt/homebrew/opt/llvm/bin/clang"),
+    ]
+}
+
+fn link_llvm_ir_with_clang(ll_path: &Path, output_path: &Path) -> Result<(), TargetEmitError> {
+    let args = clang_command_args(ll_path, output_path);
+
+    for program in clang_candidates() {
+        match Command::new(&program).args(&args).output() {
+            Ok(output) if output.status.success() => return Ok(()),
+            Ok(output) => {
+                return Err(TargetEmitError::BackendFailed {
+                    program,
+                    status: output.status.to_string(),
+                    stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(TargetEmitError::BackendLaunchFailed { program, source });
+            }
+        }
+    }
+
+    Err(TargetEmitError::BackendNotFound)
 }
 
 #[cfg(test)]
@@ -199,5 +335,62 @@ mod cli_tests {
 
         let _ = fs::remove_file(source_path);
         let _ = fs::remove_file(written);
+    }
+
+    #[test]
+    fn target_temp_llvm_path_uses_tmp_dir_and_ll_extension() {
+        let output_path = PathBuf::from("/tmp/my_rust_compiler_output");
+
+        let path = target_temp_llvm_path(&output_path);
+
+        assert_eq!(path.parent(), Some(std::env::temp_dir().as_path()));
+        assert_eq!(path.extension().and_then(|ext| ext.to_str()), Some("ll"));
+        assert!(
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains("my_rust_compiler_output"))
+        );
+    }
+
+    #[test]
+    fn clang_command_args_pass_ll_input_and_output_path() {
+        let ll_path = PathBuf::from("/tmp/input.ll");
+        let output_path = PathBuf::from("/tmp/output");
+
+        let args = clang_command_args(&ll_path, &output_path);
+
+        assert_eq!(
+            args,
+            vec![
+                OsString::from("/tmp/input.ll"),
+                OsString::from("-o"),
+                OsString::from("/tmp/output"),
+            ]
+        );
+    }
+
+    #[test]
+    fn emit_llvm_ir_to_path_writes_requested_path_when_ir_is_available() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after unix epoch")
+            .as_nanos();
+        let source_path =
+            std::env::temp_dir().join(format!("my_rust_compiler_ll_emit_to_{unique}.txt"));
+        let ll_path = std::env::temp_dir().join(format!("my_rust_compiler_requested_{unique}.ll"));
+
+        fs::write(&source_path, "fn main() {}").expect("should create temporary source");
+        let compiler = Compiler::build(false).expect("compiler should build");
+        let source = SourceFile::from_path(&source_path).expect("source should load");
+        let outcome = compiler.compile(source);
+
+        emit_llvm_ir_to_path(&outcome, &ll_path).expect("should emit llvm ir");
+        let text = fs::read_to_string(&ll_path).expect("should read emitted llvm ir");
+
+        assert!(text.contains("; LLVM-like IR"));
+        assert!(text.contains("define void @main"));
+
+        let _ = fs::remove_file(source_path);
+        let _ = fs::remove_file(ll_path);
     }
 }

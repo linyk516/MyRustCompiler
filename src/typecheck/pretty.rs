@@ -145,6 +145,7 @@ impl<'a> TypeckDumper<'a> {
     fn ty_text(&self, ty: TyId) -> String {
         match self.tys.kind(ty) {
             TyKind::Int => "i32".to_string(),
+            TyKind::Str => "str".to_string(),
             TyKind::Unit => "()".to_string(),
             TyKind::Never => "!".to_string(),
             TyKind::Tuple(elems) => {
@@ -163,12 +164,19 @@ impl<'a> TypeckDumper<'a> {
                     format!("&{}", self.ty_text(*inner))
                 }
             }
-            TyKind::Fn { params, ret } => {
-                let params = params
+            TyKind::Fn {
+                params,
+                ret,
+                variadic,
+            } => {
+                let mut params = params
                     .iter()
                     .map(|&param| self.ty_text(param))
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                    .collect::<Vec<_>>();
+                if *variadic {
+                    params.push("...".to_string());
+                }
+                let params = params.join(", ");
                 format!("fn({}) -> {}", params, self.ty_text(*ret))
             }
             TyKind::Infer(var) => format!("?T{}", var),

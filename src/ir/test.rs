@@ -161,6 +161,28 @@ fn ir_dump_uses_source_names_for_calls() {
 }
 
 #[test]
+fn ir_dump_declares_extern_variadic_function_and_global_string() {
+    let ir = compile_ir(
+        r#"
+        extern fn printf(fmt:str, ...) -> i32;
+
+        fn main() -> i32 {
+            printf("answer = %d\n", 42);
+            return 0;
+        }
+        "#,
+    );
+    let dump = IrDump::new(&ir.program).dump();
+
+    assert!(dump.contains("@.str.0 = private unnamed_addr constant"));
+    assert!(dump.contains("c\"answer = %d\\0A\\00\""));
+    assert!(dump.contains("declare i32 @printf(ptr, ...)"));
+    assert!(dump.contains("call i32 (ptr, ...) @printf(ptr"));
+    assert!(dump.contains(", i32 42)"));
+    assert!(!dump.contains("define i32 @printf"));
+}
+
+#[test]
 fn ir_lowering_lowers_aggregate_field_and_index_to_gep_load_store() {
     let ir = compile_ir(
         "

@@ -1,8 +1,8 @@
 use std::fmt::{Display, Write};
 
 use crate::ast::ty::{
-    BinaryOp, Block, ElseBranch, Expr, ExprKind, FnDecl, Ident, Item, ItemKind, Param, Place,
-    PlaceKind, Program, Stmt, StmtKind, Ty, TyKind,
+    BinaryOp, Block, ElseBranch, Expr, ExprKind, ExternFnDecl, FnDecl, FnSig, Ident, Item,
+    ItemKind, Param, Place, PlaceKind, Program, Stmt, StmtKind, Ty, TyKind,
 };
 
 impl Program {
@@ -49,24 +49,35 @@ impl AstDumper {
     fn item(&mut self, item: &Item, indent: usize) {
         match &item.kind {
             ItemKind::Fn(func) => self.fn_decl(func, indent),
+            ItemKind::ExternFn(func) => self.extern_fn_decl(func, indent),
         }
     }
 
     fn fn_decl(&mut self, func: &FnDecl, indent: usize) {
-        let mut header = format!("Fn {}", self.ident(&func.name));
-        if let Some(ret_ty) = &func.ret_ty {
+        self.fn_sig("Fn", &func.sig, indent);
+        self.block(&func.body, indent + 1);
+    }
+
+    fn extern_fn_decl(&mut self, func: &ExternFnDecl, indent: usize) {
+        self.fn_sig("ExternFn", &func.sig, indent);
+    }
+
+    fn fn_sig(&mut self, label: &str, sig: &FnSig, indent: usize) {
+        let mut header = format!("{label} {}", self.ident(&sig.name));
+        if sig.variadic {
+            header.push_str(" variadic");
+        }
+        if let Some(ret_ty) = &sig.ret_ty {
             let _ = write!(header, " -> {}", self.ty_inline(ret_ty));
         }
         self.line(indent, header);
 
-        if !func.params.is_empty() {
+        if !sig.params.is_empty() {
             self.line(indent + 1, "Params");
-            for param in &func.params {
+            for param in &sig.params {
                 self.param(param, indent + 2);
             }
         }
-
-        self.block(&func.body, indent + 1);
     }
 
     fn param(&mut self, param: &Param, indent: usize) {
@@ -217,6 +228,9 @@ impl AstDumper {
     fn expr(&mut self, expr: &Expr, indent: usize) {
         match &expr.kind {
             ExprKind::Int(value) => self.line(indent, format!("Int {value}")),
+            ExprKind::String(value) => {
+                self.line(indent, format!("String \"{}\"", escape_string(value)))
+            }
             ExprKind::Place(place) => {
                 self.line(indent, "PlaceExpr");
                 self.place(place, indent + 1);
@@ -318,6 +332,7 @@ impl AstDumper {
     fn ty_inline(&self, ty: &Ty) -> String {
         match &ty.kind {
             TyKind::I32 => "i32".to_string(),
+            TyKind::Str => "str".to_string(),
             TyKind::Ref { mutable, inner } => {
                 if *mutable {
                     format!("&mut {}", self.ty_inline(inner))
@@ -361,4 +376,19 @@ impl AstDumper {
             BinaryOp::Ge => "Ge",
         }
     }
+}
+
+fn escape_string(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.chars() {
+        match ch {
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\0' => out.push_str("\\0"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }

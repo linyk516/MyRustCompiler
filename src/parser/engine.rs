@@ -299,6 +299,7 @@ impl<'a> ParserEngine<'a> {
                         | KeywordKind::Return
                         | KeywordKind::Break
                         | KeywordKind::Continue
+                        | KeywordKind::Extern
                 )
                 | Eof
         )
@@ -322,9 +323,12 @@ impl<'a> ParserEngine<'a> {
                 KeywordKind::Loop => Some(t.loop_),
                 KeywordKind::Break => Some(t.break_),
                 KeywordKind::Continue => Some(t.continue_),
+                KeywordKind::Extern => Some(t.extern_),
+                KeywordKind::Str => Some(t.str_),
             },
             Literal(kind) => match kind {
                 LiteralKind::Int32 => Some(t.literal_i32),
+                LiteralKind::String => Some(t.literal_string),
             },
             Assign => Some(t.assignment),
             Operator(kind) => match kind {
@@ -357,6 +361,7 @@ impl<'a> ParserEngine<'a> {
                 SpecialKind::Arrow => Some(t.arrow),
                 SpecialKind::Dot => Some(t.dot),
                 SpecialKind::DotDot => Some(t.dotdot),
+                SpecialKind::Ellipsis => Some(t.ellipsis),
             },
             Eof => Some(t.eof),
         }

@@ -150,6 +150,11 @@ mod lexer_ident_or_keyword_tests {
                 token.kind,
                 TokenKind::Keyword(KeywordKind::Continue)
             )),
+            "extern" => assert!(matches!(
+                token.kind,
+                TokenKind::Keyword(KeywordKind::Extern)
+            )),
+            "str" => assert!(matches!(token.kind, TokenKind::Keyword(KeywordKind::Str))),
             _ => panic!("unexpected keyword text: {text}"),
         }
     }
@@ -200,7 +205,7 @@ mod lexer_ident_or_keyword_tests {
     fn lex_ident_or_keyword_covers_all_keywords() {
         let keywords = [
             "i32", "let", "if", "else", "while", "return", "mut", "fn", "for", "in", "loop",
-            "break", "continue",
+            "break", "continue", "extern", "str",
         ];
 
         for keyword in keywords {
@@ -654,19 +659,19 @@ mod lexer_special_tests {
     }
 
     #[test]
-    fn lex_special_prefers_longest_match_for_dotdot() {
+    fn lex_special_prefers_longest_match_for_ellipsis() {
         let mut lexer = Lexer::new("...");
 
         let token = lexer.lex_special().expect("token should be produced");
 
         assert!(matches!(
             token.kind,
-            TokenKind::Special(SpecialKind::DotDot)
+            TokenKind::Special(SpecialKind::Ellipsis)
         ));
         assert_eq!(token.span.start, 0);
-        assert_eq!(token.span.end, 2);
-        assert_eq!(lexer.cursor.pos(), 2);
-        assert_eq!(lexer.cursor.peek(), Some('.'));
+        assert_eq!(token.span.end, 3);
+        assert_eq!(lexer.cursor.pos(), 3);
+        assert_eq!(lexer.cursor.peek(), None);
     }
 
     #[test]
@@ -987,6 +992,20 @@ mod lexer_next_token_tests {
     }
 
     #[test]
+    fn next_token_lexes_string_literal_with_escapes() {
+        let mut lexer = Lexer::new("\"hello\\n\\\"world\\\"\"");
+
+        let token = next_token(&mut lexer);
+
+        assert!(matches!(
+            token.kind,
+            TokenKind::Literal(LiteralKind::String)
+        ));
+        assert_eq!(token.span.start, 0);
+        assert_eq!(token.span.end, "\"hello\\n\\\"world\\\"\"".len());
+    }
+
+    #[test]
     fn next_token_lexes_assign_and_operator() {
         let mut assign_lexer = Lexer::new("=");
         let assign = next_token(&mut assign_lexer);
@@ -1093,18 +1112,61 @@ mod lexer_next_token_tests {
     }
 
     #[test]
-    fn next_token_prefers_dotdot_longest_match() {
+    fn next_token_prefers_ellipsis_longest_match() {
         let mut lexer = Lexer::new("...x");
 
         let first = next_token(&mut lexer);
         let second = next_token(&mut lexer);
 
-        assert!(matches!(first.kind, TokenKind::Special(_)));
+        assert!(matches!(
+            first.kind,
+            TokenKind::Special(super::super::token::SpecialKind::Ellipsis)
+        ));
         assert_eq!(first.span.start, 0);
-        assert_eq!(first.span.end, 2);
-        assert!(matches!(second.kind, TokenKind::Special(_)));
-        assert_eq!(second.span.start, 2);
-        assert_eq!(second.span.end, 3);
+        assert_eq!(first.span.end, 3);
+        assert!(matches!(second.kind, TokenKind::Ident));
+        assert_eq!(second.span.start, 3);
+        assert_eq!(second.span.end, 4);
+    }
+
+    #[test]
+    fn next_token_prefers_ellipsis_over_dotdot() {
+        let mut lexer = Lexer::new("...");
+
+        let token = next_token(&mut lexer);
+
+        assert!(matches!(
+            token.kind,
+            TokenKind::Special(super::super::token::SpecialKind::Ellipsis)
+        ));
+        assert_eq!(token.span.start, 0);
+        assert_eq!(token.span.end, 3);
+    }
+
+    #[test]
+    fn next_token_reports_unterminated_string_literal() {
+        let mut lexer = Lexer::new("\"hello");
+
+        let err = lexer
+            .next_token()
+            .expect_err("unterminated string literal should error");
+
+        assert_eq!(err.kind, LexErrorKind::UnterminatedStringLiteral);
+        assert_eq!(err.span.start, 0);
+        assert_eq!(err.span.end, "\"hello".len());
+    }
+
+    #[test]
+    fn next_token_reports_invalid_string_escape() {
+        let mut lexer = Lexer::new("\"bad\\x\"");
+
+        let err = lexer
+            .next_token()
+            .expect_err("invalid string escape should error");
+
+        assert_eq!(err.kind, LexErrorKind::InvalidStringEscape('x'));
+        assert_eq!(err.span.start, 4);
+        assert_eq!(err.span.end, 6);
     }
 
     #[test]

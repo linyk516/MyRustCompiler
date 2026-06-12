@@ -11,35 +11,77 @@ pub struct TypeError {
 
 #[derive(Debug, Clone)]
 pub enum TypeErrorKind {
-    MismatchedTypes { expected: TyId, actual: TyId },
+    MismatchedTypes {
+        expected: TyId,
+        actual: TyId,
+    },
 
-    CannotInferType { ty: TyId },
+    CannotInferType {
+        ty: TyId,
+    },
 
-    OccursCheckFailed { var: TyVarId, ty: TyId },
+    OccursCheckFailed {
+        var: TyVarId,
+        ty: TyId,
+    },
 
-    NotCallable { callee: TyId },
+    NotCallable {
+        callee: TyId,
+    },
 
-    WrongArgCount { expected: usize, actual: usize },
+    WrongArgCount {
+        expected: usize,
+        actual: usize,
+    },
+
+    WrongVariadicArgCount {
+        expected_at_least: usize,
+        actual: usize,
+    },
+
+    InvalidVariadicArgType {
+        ty: TyId,
+    },
 
     //InvalidUnaryOp { op: UnaryOp, operand: TyId },
 
     //InvalidBinaryOp { op: BinaryOp, lhs: TyId, rhs: TyId },
-    InvalidIndex { base: TyId, index: TyId },
+    InvalidIndex {
+        base: TyId,
+        index: TyId,
+    },
 
-    NotAssignable { target: TyId },
+    NotAssignable {
+        target: TyId,
+    },
 
-    CannotBorrow { mutable: bool, ty: TyId },
+    CannotBorrow {
+        mutable: bool,
+        ty: TyId,
+    },
 
-    CannotDeref { ty: TyId },
+    CannotDeref {
+        ty: TyId,
+    },
 
     BreakOutsideLoop,
     ContinueOutsideLoop,
 
-    ReturnTypeMismatch { expected: TyId, actual: TyId },
+    ReturnTypeMismatch {
+        expected: TyId,
+        actual: TyId,
+    },
 
-    IfBranchMismatch { then_ty: TyId, else_ty: TyId },
+    IfBranchMismatch {
+        then_ty: TyId,
+        else_ty: TyId,
+    },
 
-    MissingElseForValueIf { then_ty: TyId },
+    MissingElseForValueIf {
+        then_ty: TyId,
+    },
 
-    Internal { message: String },
+    Internal {
+        message: String,
+    },
 }

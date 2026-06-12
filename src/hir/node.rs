@@ -80,6 +80,7 @@ pub struct HirItem {
 #[derive(Debug, Clone)]
 pub enum HirItemKind {
     Fn(HirFn),
+    ExternFn(HirExternFn),
 }
 
 #[derive(Debug, Clone)]
@@ -90,9 +91,16 @@ pub struct HirFn {
 }
 
 #[derive(Debug, Clone)]
+pub struct HirExternFn {
+    pub name: String,
+    pub sig: HirFnSig,
+}
+
+#[derive(Debug, Clone)]
 pub struct HirFnSig {
     pub params: Vec<HirParam>,
     pub ret_ty: HirTy,
+    pub variadic: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +157,7 @@ pub struct HirExpr {
 #[derive(Debug, Clone)]
 pub enum HirExprKind {
     Int(i32),
+    String(String),
 
     Path(Res),
 

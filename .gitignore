@@ -1,1 +1,5 @@
 /target
+/cache/
+.DS_Store
+**/.DS_Store
+*.ll

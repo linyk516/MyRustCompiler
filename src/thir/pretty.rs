@@ -167,6 +167,9 @@ impl<'a> ThirDumper<'a> {
     fn expr_kind(&mut self, kind: &ThirExprKind, indent: usize) {
         match kind {
             ThirExprKind::Int(value) => self.line(indent, format!("Int {value}")),
+            ThirExprKind::String(value) => {
+                self.line(indent, format!("String \"{}\"", escape_string(value)))
+            }
             ThirExprKind::Use(place) => {
                 self.line(indent, "Use");
                 self.place(place, indent + 1);
@@ -298,6 +301,7 @@ impl<'a> ThirDumper<'a> {
     fn ty_text(&self, ty: TyId) -> String {
         match self.tys.kind(ty) {
             TyKind::Int => "i32".to_string(),
+            TyKind::Str => "str".to_string(),
             TyKind::Unit => "()".to_string(),
             TyKind::Never => "!".to_string(),
             TyKind::Tuple(elems) => {
@@ -315,15 +319,37 @@ impl<'a> ThirDumper<'a> {
                     format!("&{}", self.ty_text(*inner))
                 }
             }
-            TyKind::Fn { params, ret } => {
-                let params = params
+            TyKind::Fn {
+                params,
+                ret,
+                variadic,
+            } => {
+                let mut params = params
                     .iter()
                     .map(|param| self.ty_text(*param))
                     .collect::<Vec<_>>();
+                if *variadic {
+                    params.push("...".to_string());
+                }
                 format!("fn({}) -> {}", params.join(", "), self.ty_text(*ret))
             }
             TyKind::Infer(var) => format!("?T{var}"),
             TyKind::Error => "<error>".to_string(),
         }
     }
+}
+
+fn escape_string(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.chars() {
+        match ch {
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\0' => out.push_str("\\0"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }

@@ -267,13 +267,21 @@ impl InferCtx {
                 let inner = self.deep_resolve_ty(tys, inner);
                 tys.intern(TyKind::Ref { mutable, inner })
             }
-            TyKind::Fn { params, ret } => {
+            TyKind::Fn {
+                params,
+                ret,
+                variadic,
+            } => {
                 let params = params
                     .into_iter()
                     .map(|param| self.deep_resolve_ty(tys, param))
                     .collect();
                 let ret = self.deep_resolve_ty(tys, ret);
-                tys.intern(TyKind::Fn { params, ret })
+                tys.intern(TyKind::Fn {
+                    params,
+                    ret,
+                    variadic,
+                })
             }
             _ => ty,
         }
@@ -392,13 +400,17 @@ impl InferCtx {
                 TyKind::Fn {
                     params: expected_params,
                     ret: expected_ret,
+                    variadic: expected_variadic,
                 },
                 TyKind::Fn {
                     params: actual_params,
                     ret: actual_ret,
+                    variadic: actual_variadic,
                 },
             ) => {
-                if expected_params.len() != actual_params.len() {
+                if expected_variadic != actual_variadic
+                    || expected_params.len() != actual_params.len()
+                {
                     return Err(self.mismatched(expected, actual));
                 }
 
@@ -411,7 +423,11 @@ impl InferCtx {
                     .collect::<Result<Vec<_>, _>>()?;
                 let ret = self.unify(tys, expected_ret, actual_ret)?;
 
-                Ok(tys.intern(TyKind::Fn { params, ret }))
+                Ok(tys.intern(TyKind::Fn {
+                    params,
+                    ret,
+                    variadic: expected_variadic,
+                }))
             }
 
             _ => Err(self.mismatched(expected, actual)),
@@ -435,7 +451,7 @@ impl InferCtx {
                 .any(|elem| self.occurs_in(tys, root, elem)),
             TyKind::Array { elem, .. } => self.occurs_in(tys, root, elem),
             TyKind::Ref { inner, .. } => self.occurs_in(tys, root, inner),
-            TyKind::Fn { params, ret } => {
+            TyKind::Fn { params, ret, .. } => {
                 params
                     .into_iter()
                     .any(|param| self.occurs_in(tys, root, param))

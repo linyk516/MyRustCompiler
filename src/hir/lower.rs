@@ -75,7 +75,7 @@ impl HirLowerer<'_> {
         for item in &self.ast.items {
             match &item.kind {
                 ItemKind::Fn(fn_decl) => {
-                    let name = fn_decl.name.kind.clone();
+                    let name = fn_decl.sig.name.kind.clone();
                     let span = item.span.clone();
 
                     // 若已经存在，则抛出错误，忽略当前的定义继续处理
@@ -92,6 +92,24 @@ impl HirLowerer<'_> {
 
                     // 若之前未定义过，则分配一个定义
                     let id = self.defs.alloc(name, DefKind::Fn, span);
+                    self.item_defs.insert(item.id, id);
+                }
+                ItemKind::ExternFn(fn_decl) => {
+                    let name = fn_decl.sig.name.kind.clone();
+                    let span = item.span.clone();
+
+                    if let Some((_, data)) = self.defs.get_by_names(&name) {
+                        self.emit_error(
+                            HirLowerErrorKind::DuplicateDef {
+                                name,
+                                previous: data.span.clone(),
+                            },
+                            span,
+                        );
+                        continue;
+                    }
+
+                    let id = self.defs.alloc(name, DefKind::ExternFn, span);
                     self.item_defs.insert(item.id, id);
                 }
             }
@@ -185,6 +203,27 @@ impl HirLowerer<'_> {
                     kind: HirItemKind::Fn(hir_fn),
                 })
             }
+            ItemKind::ExternFn(fn_decl) => {
+                let name = fn_decl.sig.name.kind.clone();
+                let params =
+                    self.lower_extern_param_list(def_id, &fn_decl.sig.params, span.clone());
+                let ret_ty = match &fn_decl.sig.ret_ty {
+                    Some(ty) => self.lower_ty(ty.kind.clone(), ty.span.clone()),
+                    None => HirTy::unit(span.clone()),
+                };
+                Some(HirItem {
+                    def_id,
+                    span,
+                    kind: HirItemKind::ExternFn(crate::hir::node::HirExternFn {
+                        name,
+                        sig: HirFnSig {
+                            params,
+                            ret_ty,
+                            variadic: fn_decl.sig.variadic,
+                        },
+                    }),
+                })
+            }
         }
     }
 
@@ -193,14 +232,14 @@ impl HirLowerer<'_> {
         // 进入函数作用域
         self.enter_scope(ScopeKind::Function);
 
-        let name = fn_decl.name.kind.clone();
+        let name = fn_decl.sig.name.kind.clone();
 
         // 解析参数表
-        let param_list = self.lower_param_list(&fn_decl.params, span.clone());
+        let param_list = self.lower_param_list(&fn_decl.sig.params, span.clone());
         let params: Vec<_> = param_list.iter().map(|p| p.local_id).collect();
 
         // 解析返回类型
-        let ret_ty = match &fn_decl.ret_ty {
+        let ret_ty = match &fn_decl.sig.ret_ty {
             Some(ty) => self.lower_ty(ty.kind.clone(), ty.span.clone()),
             None => HirTy::unit(span.clone()),
         };
@@ -208,6 +247,7 @@ impl HirLowerer<'_> {
         let sig = HirFnSig {
             params: param_list,
             ret_ty,
+            variadic: fn_decl.sig.variadic,
         };
 
         // 解析函数体
@@ -269,9 +309,53 @@ impl HirLowerer<'_> {
         param_list
     }
 
+    fn lower_extern_param_list(
+        &mut self,
+        owner: DefId,
+        params: &[Param],
+        span: Span,
+    ) -> Vec<HirParam> {
+        let mut param_list = vec![];
+        let mut seen_params: HashMap<String, Span> = HashMap::new();
+
+        for param in params {
+            let name = param.name.kind.clone();
+            if let Some(previous) = seen_params.get(&name) {
+                self.emit_error(
+                    HirLowerErrorKind::DuplicateParam {
+                        name: name.clone(),
+                        previous: previous.clone(),
+                    },
+                    param.name.span.clone(),
+                );
+            } else {
+                seen_params.insert(name.clone(), param.name.span.clone());
+            }
+
+            let local_id = self.locals.alloc(
+                name.clone(),
+                param.mutable,
+                LocalKind::Param,
+                owner,
+                param.name.span.clone(),
+            );
+
+            param_list.push(HirParam {
+                local_id,
+                name,
+                mutable: param.mutable,
+                ty: self.lower_ty(param.ty.kind.clone(), param.ty.span.clone()),
+                span: span.clone(),
+            });
+        }
+
+        param_list
+    }
+
     fn lower_ty(&self, ast_ty_kind: TyKind, span: Span) -> HirTy {
         let hir_ty_kind = match ast_ty_kind {
             TyKind::I32 => HirTyKind::I32,
+            TyKind::Str => HirTyKind::Str,
             TyKind::Ref { mutable, inner } => {
                 let inner_ty = self.lower_ty(inner.kind, span.clone());
                 HirTyKind::Ref {
@@ -516,6 +600,8 @@ impl HirLowerer<'_> {
     fn lower_expr(&mut self, expr: &Expr) -> HirExpr {
         let kind = match &expr.kind {
             ExprKind::Int(value) => HirExprKind::Int(*value),
+
+            ExprKind::String(value) => HirExprKind::String(value.clone()),
 
             ExprKind::Place(place) => return self.lower_place_as_expr(place),
 

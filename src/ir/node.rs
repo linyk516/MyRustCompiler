@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use crate::{
     ast::ty::BinaryOp,
     hir::id::DefId,
-    ir::id::{IrBlockId, IrFunctionId, IrSlotId, IrValueId},
+    ir::id::{
+        IrBlockId, IrExternalFunctionId, IrFunctionId, IrGlobalStringId, IrSlotId, IrValueId,
+    },
     lexer::token::Span,
     thir::id::ThirLocalId,
     typecheck::ty::TyId,
@@ -13,6 +15,7 @@ use crate::{
 /// LLVM-like IR 类型。`Ptr` 使用现代 LLVM opaque pointer 风格。
 pub enum IrTy {
     I1,
+    I8,
     I32,
     Void,
     Ptr,
@@ -36,6 +39,9 @@ impl IrTy {
 pub struct IrProgram {
     pub functions: Vec<IrFunction>,
     pub function_map: HashMap<DefId, IrFunctionId>,
+    pub extern_functions: Vec<IrExternalFunction>,
+    pub extern_function_map: HashMap<DefId, IrExternalFunctionId>,
+    pub global_strings: Vec<IrGlobalString>,
 }
 
 impl IrProgram {
@@ -43,6 +49,9 @@ impl IrProgram {
         Self {
             functions: vec![],
             function_map: HashMap::new(),
+            extern_functions: vec![],
+            extern_function_map: HashMap::new(),
+            global_strings: vec![],
         }
     }
 
@@ -56,6 +65,46 @@ impl IrProgram {
     pub fn function(&self, id: IrFunctionId) -> Option<&IrFunction> {
         self.functions.get(id.index())
     }
+
+    pub fn alloc_extern_function(
+        &mut self,
+        owner: DefId,
+        function: IrExternalFunction,
+    ) -> IrExternalFunctionId {
+        let id = IrExternalFunctionId(self.extern_functions.len());
+        self.extern_function_map.insert(owner, id);
+        self.extern_functions.push(function);
+        id
+    }
+
+    pub fn extern_function(&self, id: IrExternalFunctionId) -> Option<&IrExternalFunction> {
+        self.extern_functions.get(id.index())
+    }
+
+    pub fn alloc_global_string(&mut self, string: IrGlobalString) -> IrGlobalStringId {
+        let id = IrGlobalStringId(self.global_strings.len());
+        self.global_strings.push(string);
+        id
+    }
+
+    pub fn global_string(&self, id: IrGlobalStringId) -> Option<&IrGlobalString> {
+        self.global_strings.get(id.index())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct IrExternalFunction {
+    pub owner: DefId,
+    pub symbol_name: String,
+    pub params: Vec<IrTy>,
+    pub ret_ty: IrTy,
+    pub variadic: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct IrGlobalString {
+    pub name: String,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -164,6 +213,7 @@ pub enum IrValueKind {
     Unit,
     Param(usize),
     SlotAddr(IrSlotId),
+    GlobalStringAddr(IrGlobalStringId),
     InstrResult,
 }
 
@@ -230,6 +280,8 @@ pub enum IrInstrKind {
     Call {
         callee: DefId,
         ret_ty: IrTy,
+        param_tys: Vec<IrTy>,
+        variadic: bool,
         args: Vec<(IrTy, IrValueId)>,
     },
 }

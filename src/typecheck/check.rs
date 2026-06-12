@@ -2,7 +2,7 @@ use crate::{
     ast::ty::BinaryOp,
     hir::{
         id::{DefId, HirBodyId, HirExprId, HirItemId, LocalId},
-        node::{HirBlock, HirExprKind, HirFnSig, HirItemKind, HirParam, HirProgram, HirStmtKind},
+        node::{HirBlock, HirExprKind, HirFnSig, HirItemKind, HirProgram, HirStmtKind},
         res::Res,
         table::{DefTable, LocalTable},
         ty::{HirTy, HirTyKind},
@@ -76,8 +76,8 @@ impl<'hir> TypeckCtx<'hir> {
 
     /// 收集所有顶层定义的类型。
     ///
-    /// 当前语言只有函数 item，所以这一步主要是把每个函数签名转成
-    /// `TyKind::Fn { params, ret }`，写入 `TypeckResults::def_tys`。
+    /// 当前语言有普通函数和外部函数 item，所以这一步主要是把每个函数签名转成
+    /// `TyKind::Fn { params, ret, variadic }`，写入 `TypeckResults::def_tys`。
     fn collect_def_tys(&mut self) {
         for &root_item in &self.hir.root_items {
             self.collect_item_ty(root_item);
@@ -96,7 +96,11 @@ impl<'hir> TypeckCtx<'hir> {
 
         match &item.kind {
             HirItemKind::Fn(hir_fn) => {
-                let fn_ty = self.collect_fn_ty(&hir_fn.sig.params, &hir_fn.sig.ret_ty);
+                let fn_ty = self.collect_fn_ty(&hir_fn.sig);
+                self.results.set_def_ty(item.def_id, fn_ty);
+            }
+            HirItemKind::ExternFn(hir_fn) => {
+                let fn_ty = self.collect_fn_ty(&hir_fn.sig);
                 self.results.set_def_ty(item.def_id, fn_ty);
             }
         }
@@ -106,14 +110,19 @@ impl<'hir> TypeckCtx<'hir> {
     ///
     /// 参数和返回值在 HIR 中仍然是语法类型 `HirTy`；类型检查阶段需要先把它们
     /// 转换为 `TyStore` 中的 `TyId`，再组合成函数类型。
-    fn collect_fn_ty(&mut self, params: &[HirParam], ret: &HirTy) -> TyId {
-        let params = params
+    fn collect_fn_ty(&mut self, sig: &HirFnSig) -> TyId {
+        let params = sig
+            .params
             .iter()
             .map(|param| self.lower_hir_ty(&param.ty))
             .collect();
-        let ret = self.lower_hir_ty(ret);
+        let ret = self.lower_hir_ty(&sig.ret_ty);
 
-        self.tys.intern(TyKind::Fn { params, ret })
+        self.tys.intern(TyKind::Fn {
+            params,
+            ret,
+            variadic: sig.variadic,
+        })
     }
 
     /// 把 HIR 类型语法转换成类型检查阶段使用的语义类型。
@@ -123,6 +132,7 @@ impl<'hir> TypeckCtx<'hir> {
     fn lower_hir_ty(&mut self, ty: &HirTy) -> TyId {
         let ty_kind = match &ty.kind {
             HirTyKind::I32 => TyKind::Int,
+            HirTyKind::Str => TyKind::Str,
             HirTyKind::Ref { mutable, inner } => TyKind::Ref {
                 mutable: *mutable,
                 inner: self.lower_hir_ty(inner),
@@ -152,6 +162,7 @@ impl<'hir> TypeckCtx<'hir> {
 
         match item.kind {
             HirItemKind::Fn(fn_item) => self.check_fn(item.def_id, fn_item.body, &fn_item.sig),
+            HirItemKind::ExternFn(_) => {}
         }
     }
 
@@ -167,7 +178,7 @@ impl<'hir> TypeckCtx<'hir> {
 
         let fn_ty = self.tys.kind(fn_ty_id);
         let (param_tys, ret_ty) = match fn_ty {
-            TyKind::Fn { params, ret } => (params.clone(), *ret),
+            TyKind::Fn { params, ret, .. } => (params.clone(), *ret),
             _ => {
                 self.emit_internal("Expected function type, got something else!");
                 return;
@@ -299,6 +310,7 @@ impl<'hir> TypeckCtx<'hir> {
         let span = expr_data.span.clone();
         let ty = match expr_data.kind {
             HirExprKind::Int(_) => self.tys.int(),
+            HirExprKind::String(_) => self.tys.str(),
             HirExprKind::Path(res) => self.check_res(res, span.clone()),
             HirExprKind::Binary { op, lhs, rhs } => self.check_binary_expr(op, lhs, rhs, span),
             HirExprKind::Call { callee, args } => self.check_call_expr(callee, &args, span),
@@ -406,7 +418,12 @@ impl<'hir> TypeckCtx<'hir> {
         let callee_ty = self.check_res(callee, span.clone());
         let callee_ty = self.infer.resolve_ty(&self.tys, callee_ty);
 
-        let TyKind::Fn { params, ret } = self.tys.kind(callee_ty).clone() else {
+        let TyKind::Fn {
+            params,
+            ret,
+            variadic,
+        } = self.tys.kind(callee_ty).clone()
+        else {
             if !matches!(self.tys.kind(callee_ty), TyKind::Error) {
                 self.emit_error(TypeErrorKind::NotCallable { callee: callee_ty }, span);
             }
@@ -416,7 +433,17 @@ impl<'hir> TypeckCtx<'hir> {
             return self.tys.error();
         };
 
-        if params.len() != args.len() {
+        if variadic {
+            if args.len() < params.len() {
+                self.emit_error(
+                    TypeErrorKind::WrongVariadicArgCount {
+                        expected_at_least: params.len(),
+                        actual: args.len(),
+                    },
+                    span.clone(),
+                );
+            }
+        } else if params.len() != args.len() {
             self.emit_error(
                 TypeErrorKind::WrongArgCount {
                     expected: params.len(),
@@ -431,7 +458,13 @@ impl<'hir> TypeckCtx<'hir> {
             self.unify_at(param_ty, arg_ty, self.expr_span(arg));
         }
         for &arg in args.iter().skip(params.len()) {
-            self.check_expr(arg, None);
+            let arg_ty = self.check_expr(arg, None);
+            if variadic && !self.is_valid_variadic_arg_ty(arg_ty) {
+                self.emit_error(
+                    TypeErrorKind::InvalidVariadicArgType { ty: arg_ty },
+                    self.expr_span(arg),
+                );
+            }
         }
 
         ret
@@ -948,12 +981,20 @@ impl<'hir> TypeckCtx<'hir> {
             TyKind::Tuple(elems) => elems.iter().any(|&elem| self.contains_infer_ty(elem)),
             TyKind::Array { elem, .. } => self.contains_infer_ty(*elem),
             TyKind::Ref { inner, .. } => self.contains_infer_ty(*inner),
-            TyKind::Fn { params, ret } => {
+            TyKind::Fn { params, ret, .. } => {
                 params.iter().any(|&param| self.contains_infer_ty(param))
                     || self.contains_infer_ty(*ret)
             }
-            TyKind::Int | TyKind::Unit | TyKind::Never | TyKind::Error => false,
+            TyKind::Int | TyKind::Str | TyKind::Unit | TyKind::Never | TyKind::Error => false,
         }
+    }
+
+    /// 判断一个类型是否可以安全地作为 C varargs 实参传给外部函数。
+    ///
+    /// v1 只允许 `i32` 和 `str`，分别映射到 LLVM 的 `i32` 和 `ptr`。
+    fn is_valid_variadic_arg_ty(&mut self, ty: TyId) -> bool {
+        let ty = self.infer.resolve_ty(&self.tys, ty);
+        matches!(self.tys.kind(ty), TyKind::Int | TyKind::Str | TyKind::Error)
     }
 
     /// 判断一个类型是否已经解析为 `Never`。

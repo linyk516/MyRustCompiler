@@ -22,6 +22,7 @@ pub struct DefData {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DefKind {
     Fn,
+    ExternFn,
 }
 
 impl DefTable {

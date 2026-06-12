@@ -90,6 +90,7 @@ impl<'hir> ThirLowerCtx<'hir> {
 
         match item_data.kind {
             HirItemKind::Fn(hir_fn) => self.lower_fn(item_data.def_id, hir_fn.body, &hir_fn.sig),
+            HirItemKind::ExternFn(_) => Ok(()),
         }
     }
 
@@ -204,6 +205,7 @@ impl<'hir> ThirLowerCtx<'hir> {
         let ty = self.expr_ty(expr, &span)?;
         let kind = match expr_data.kind {
             HirExprKind::Int(value) => ThirExprKind::Int(value),
+            HirExprKind::String(value) => ThirExprKind::String(value),
             HirExprKind::Path(Res::Local(_)) => {
                 let place = self.lower_place(expr)?;
                 ThirExprKind::Use(place)
