@@ -752,3 +752,71 @@ fn cli_renderer_can_color_diagnostics_when_enabled() {
     assert!(rendered.stderr.contains("\x1b[34;1m-->\x1b[0m"));
     assert!(rendered.stderr.contains("\x1b[31m"));
 }
+
+#[cfg(feature = "gui")]
+#[test]
+fn gui_compile_source_returns_stage_text_for_valid_program() {
+    use crate::compiler::gui_api::{CompileRequest, compile_source};
+
+    let response = compile_source(CompileRequest {
+        source: "fn main() -> i32 { return 0; }".to_string(),
+        file_name: Some("gui_valid.txt".to_string()),
+        verbose: false,
+    });
+
+    assert!(response.success, "{}", response.diagnostics);
+    assert!(response.summary.contains("Compile succeeded"));
+    assert!(response.tokens.contains("Keyword(Fn)"));
+    assert!(response.cst.contains("<program>"));
+    assert!(response.ast.contains("Program"));
+    assert!(response.hir.contains("HIR Program"));
+    assert!(response.typecheck.contains("TypeckResults"));
+    assert!(response.thir.contains("THIR Program"));
+    assert!(response.ir.contains("define i32 @main"));
+}
+
+#[cfg(feature = "gui")]
+#[test]
+fn gui_compile_source_reports_diagnostics_and_skips_ir_for_invalid_program() {
+    use crate::compiler::gui_api::{CompileRequest, compile_source};
+
+    let response = compile_source(CompileRequest {
+        source: "fn main() -> i32 { return true; }".to_string(),
+        file_name: Some("gui_invalid.txt".to_string()),
+        verbose: false,
+    });
+
+    assert!(!response.success);
+    assert!(response.diagnostics.contains("error[E04"));
+    assert!(response.typecheck.contains("TypeckResults"));
+    assert_eq!(response.thir, "<not available>");
+    assert_eq!(response.ir, "<not available>");
+}
+
+#[cfg(feature = "gui")]
+#[test]
+fn gui_build_and_run_passes_stdin_to_compiled_program() {
+    use crate::compiler::gui_api::{BuildRunRequest, build_and_run};
+
+    let response = build_and_run(BuildRunRequest {
+        source: r#"
+extern fn printf(fmt:str, ...) -> i32;
+extern fn scanf(fmt:str, ...) -> i32;
+
+fn main() -> i32 {
+    let mut n:i32 = 0;
+    scanf("%d", &mut n);
+    printf("n=%d\n", n);
+    return 0;
+}
+"#
+        .to_string(),
+        file_name: Some("gui_scanf.txt".to_string()),
+        stdin: "7\n".to_string(),
+    });
+
+    assert!(response.compile.success, "{}", response.compile.diagnostics);
+    assert_eq!(response.backend_error, None);
+    assert_eq!(response.exit_code, Some(0));
+    assert_eq!(response.stdout, "n=7\n");
+}
