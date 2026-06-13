@@ -258,6 +258,11 @@ impl<'a> ThirDumper<'a> {
                 self.line(indent + 1, format!("End {end:?}"));
                 self.block(body, indent + 1);
             }
+            ThirExprKind::ForIter { local, iter, body } => {
+                self.line(indent, format!("ForIter {local:?}"));
+                self.line(indent + 1, format!("Iter {iter:?}"));
+                self.block(body, indent + 1);
+            }
             ThirExprKind::Return(value) => match value {
                 Some(value) => self.line(indent, format!("Return {value:?}")),
                 None => self.line(indent, "Return"),

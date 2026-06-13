@@ -207,6 +207,165 @@ fn compiler_rejects_bool_as_integer_initializer() {
 }
 
 #[test]
+fn compiler_rejects_uninitialized_local_read() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() { let mut a:i32; let b:i32 = a; }");
+
+    let outcome = compiler.compile(source);
+
+    assert!(outcome.has_errors(), "{:?}", outcome.diagnostics);
+    assert!(
+        outcome
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("uninitialized"))
+    );
+    assert!(
+        outcome
+            .output
+            .as_ref()
+            .and_then(|output| output.ir())
+            .is_none()
+    );
+}
+
+#[test]
+fn compiler_infers_type_from_later_assignment() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() { let mut b; b = 1; }");
+
+    let outcome = compiler.compile(source);
+
+    assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+    assert!(
+        outcome
+            .output
+            .as_ref()
+            .and_then(|output| output.ir())
+            .is_some()
+    );
+}
+
+#[test]
+fn compiler_rejects_unit_function_call_as_rvalue() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn f() {} fn main() { let value = f(); }");
+
+    let outcome = compiler.compile(source);
+
+    assert!(outcome.has_errors(), "{:?}", outcome.diagnostics);
+    assert!(
+        outcome
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("unit"))
+    );
+    assert!(
+        outcome
+            .output
+            .as_ref()
+            .and_then(|output| output.ir())
+            .is_none()
+    );
+}
+
+#[test]
+fn compiler_rejects_assignment_through_shared_reference() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() { let mut a:i32 = 1; let b = &a; *b = 2; }");
+
+    let outcome = compiler.compile(source);
+
+    assert!(outcome.has_errors(), "{:?}", outcome.diagnostics);
+    assert!(
+        outcome
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("immutable reference"))
+    );
+    assert!(
+        outcome
+            .output
+            .as_ref()
+            .and_then(|output| output.ir())
+            .is_none()
+    );
+}
+
+#[test]
+fn compiler_rejects_array_index_out_of_bounds() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() { let arr = [1, 2, 3]; let value = arr[3]; }");
+
+    let outcome = compiler.compile(source);
+
+    assert!(outcome.has_errors(), "{:?}", outcome.diagnostics);
+    assert!(
+        outcome
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("out of bounds"))
+    );
+    assert!(
+        outcome
+            .output
+            .as_ref()
+            .and_then(|output| output.ir())
+            .is_none()
+    );
+}
+
+#[test]
+fn compiler_accepts_for_loop_over_array_expression() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new(
+        r#"
+fn main() -> i32 {
+    let mut sum:i32 = 0;
+    for mut x in [1, 2, 3] {
+        sum = sum + x;
+    }
+    return sum;
+}
+"#,
+    );
+
+    let outcome = compiler.compile(source);
+
+    assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+    assert!(
+        outcome
+            .output
+            .as_ref()
+            .and_then(|output| output.ir())
+            .is_some()
+    );
+}
+
+#[test]
+fn compiler_rejects_zero_length_array_type() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() { let empty:[i32;0]; }");
+
+    let outcome = compiler.compile(source);
+
+    assert!(outcome.has_errors(), "{:?}", outcome.diagnostics);
+    assert!(
+        outcome
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("array length"))
+    );
+    assert!(
+        outcome
+            .output
+            .as_ref()
+            .and_then(|output| output.ir())
+            .is_none()
+    );
+}
+
+#[test]
 fn compiler_accepts_named_struct_literal_and_field_access() {
     let compiler = Compiler::build(false).expect("compiler should build");
     let source = SourceFile::new(

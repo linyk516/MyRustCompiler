@@ -253,6 +253,18 @@ pub enum HirExprKind {
         body: HirBlock,
     },
 
+    /// 数组/表达式形式的 for 循环。
+    ///
+    /// 当前类型检查只接受数组类型作为 `iter`，循环变量类型由数组元素类型决定。
+    ForIter {
+        local_id: LocalId,
+        name: String,
+        mutable: bool,
+        ty: Option<HirTy>,
+        iter: HirExprId,
+        body: HirBlock,
+    },
+
     Return(Option<HirExprId>),
 
     Break(Option<HirExprId>),

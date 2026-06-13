@@ -44,12 +44,31 @@ pub enum TypeErrorKind {
         ty: TyId,
     },
 
+    UninitializedLocal {
+        name: String,
+    },
+
+    UnitValueUsedAsRvalue,
+
     //InvalidUnaryOp { op: UnaryOp, operand: TyId },
 
     //InvalidBinaryOp { op: BinaryOp, lhs: TyId, rhs: TyId },
     InvalidIndex {
         base: TyId,
         index: TyId,
+    },
+
+    ArrayIndexOutOfBounds {
+        index: i32,
+        len: usize,
+    },
+
+    InvalidArrayLength {
+        len: usize,
+    },
+
+    InvalidForIterator {
+        ty: TyId,
     },
 
     UnknownField {
@@ -73,6 +92,8 @@ pub enum TypeErrorKind {
     NotAssignable {
         target: TyId,
     },
+
+    AssignThroughImmutableReference,
 
     CannotBorrow {
         mutable: bool,

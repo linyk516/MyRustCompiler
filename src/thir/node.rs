@@ -206,6 +206,11 @@ pub enum ThirExprKind {
         end: ThirExprId,
         body: ThirBlock,
     },
+    ForIter {
+        local: ThirLocalId,
+        iter: ThirExprId,
+        body: ThirBlock,
+    },
     Return(Option<ThirExprId>),
     Break(Option<ThirExprId>),
     Continue,

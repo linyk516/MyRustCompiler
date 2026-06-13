@@ -457,6 +457,34 @@ impl<'a> HirDumper<'a> {
                 self.line(indent + 1, "Body");
                 self.block(body, indent + 2);
             }
+            HirExprKind::ForIter {
+                local_id,
+                name,
+                mutable,
+                ty,
+                iter,
+                body,
+            } => {
+                let mut text = String::from("ForIter ");
+                if *mutable {
+                    text.push_str("mut ");
+                }
+                let _ = write!(
+                    text,
+                    "{} {:?} {}",
+                    name,
+                    local_id,
+                    self.local_text(*local_id)
+                );
+                if let Some(ty) = ty {
+                    let _ = write!(text, ": {}", self.ty_text(ty));
+                }
+                self.line(indent, text);
+                self.line(indent + 1, "Iter");
+                self.expr(*iter, indent + 2);
+                self.line(indent + 1, "Body");
+                self.block(body, indent + 2);
+            }
             HirExprKind::Return(expr) => {
                 self.line(indent, "Return");
                 if let Some(expr) = expr {

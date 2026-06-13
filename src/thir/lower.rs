@@ -317,6 +317,19 @@ impl<'hir> ThirLowerCtx<'hir> {
                     body,
                 }
             }
+            HirExprKind::ForIter {
+                local_id,
+                name,
+                mutable,
+                iter,
+                body,
+                ..
+            } => {
+                let iter = self.lower_expr(iter)?;
+                let local = self.declare_local(local_id, name, mutable, span.clone())?;
+                let body = self.lower_block(&body)?;
+                ThirExprKind::ForIter { local, iter, body }
+            }
             HirExprKind::Return(value) => {
                 let value = match value {
                     Some(value) => Some(self.lower_expr(value)?),

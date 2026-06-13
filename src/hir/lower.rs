@@ -970,25 +970,6 @@ impl HirLowerer<'_> {
         body: &Block,
         span: Span,
     ) -> HirExpr {
-        let (start, end) = match &iter.kind {
-            ExprKind::Range { start, end } => {
-                let start = self.lower_expr(start);
-                let end = self.lower_expr(end);
-                (self.hir.alloc_expr(start), self.hir.alloc_expr(end))
-            }
-            _ => {
-                self.emit_error(
-                    HirLowerErrorKind::UnsupportedItem {
-                        message: format!("Only range expression is supported in for loop."),
-                    },
-                    iter.span.clone(),
-                );
-                let err_start = self.hir.alloc_expr(HirExpr::err(iter.span.clone()));
-                let err_end = self.hir.alloc_expr(HirExpr::err(iter.span.clone()));
-                (err_start, err_end)
-            }
-        };
-
         let hir_ty = ty.map(|ty| self.lower_ty(ty.kind.clone(), ty.span.clone()));
 
         self.enter_scope(ScopeKind::For);
@@ -1003,17 +984,36 @@ impl HirLowerer<'_> {
         let body = self.lower_block(body);
         self.exit_scope();
 
-        HirExpr {
-            span,
-            kind: HirExprKind::ForRange {
-                local_id,
-                name: var.kind.clone(),
-                mutable,
-                ty: hir_ty,
-                start,
-                end,
-                body,
-            },
-        }
+        let kind = match &iter.kind {
+            ExprKind::Range { start, end } => {
+                let start = self.lower_expr(start);
+                let end = self.lower_expr(end);
+                let start = self.hir.alloc_expr(start);
+                let end = self.hir.alloc_expr(end);
+                HirExprKind::ForRange {
+                    local_id,
+                    name: var.kind.clone(),
+                    mutable,
+                    ty: hir_ty,
+                    start,
+                    end,
+                    body,
+                }
+            }
+            _ => {
+                let iter = self.lower_expr(iter);
+                let iter = self.hir.alloc_expr(iter);
+                HirExprKind::ForIter {
+                    local_id,
+                    name: var.kind.clone(),
+                    mutable,
+                    ty: hir_ty,
+                    iter,
+                    body,
+                }
+            }
+        };
+
+        HirExpr { span, kind }
     }
 }

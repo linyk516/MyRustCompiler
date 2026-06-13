@@ -190,6 +190,7 @@ pub enum ProdTag {
     WhileStmt,
     LoopStmtFor,
     ForStmt,
+    ForStmtIter,
     RangeExpr,
     LoopStmtInfinite,
     InfiniteLoopStmt,
@@ -1313,6 +1314,13 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     add_tagged_prod(
         &mut g,
         &mut prod_tags,
+        for_stmt,
+        rhs!(for_, var_decl, in_, cond_expr, block),
+        ProdTag::ForStmtIter,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
         range_expr,
         rhs!(cond_expr, dotdot, cond_expr),
         ProdTag::RangeExpr,
@@ -1546,6 +1554,13 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         &mut g,
         &mut prod_tags,
         addr_elem,
+        rhs!(l_brace, array_elem_list, r_brace),
+        ProdTag::AddrElemArray,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_addr_elem,
         rhs!(l_brace, array_elem_list, r_brace),
         ProdTag::AddrElemArray,
     );

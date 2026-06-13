@@ -618,6 +618,20 @@ impl Diagnostic {
                     true,
                 )
             }
+            TypeErrorKind::UninitializedLocal { name } => Self::type_error(
+                "E0421",
+                "uninitialized local variable",
+                source,
+                format!("local `{name}` may be uninitialized when read"),
+            )
+            .label(span, range, format!("`{name}` is uninitialized here"), true),
+            TypeErrorKind::UnitValueUsedAsRvalue => Self::type_error(
+                "E0422",
+                "unit value used as rvalue",
+                source,
+                "function returning `()` cannot be used as a value",
+            )
+            .label(span, range, "unit result cannot be used as a rvalue", true),
             TypeErrorKind::InvalidIndex { base, index } => {
                 let base_text = Self::type_text(*base, tys);
                 let index_text = Self::type_text(*index, tys);
@@ -633,6 +647,35 @@ impl Diagnostic {
                     format!("cannot index `{base_text}` with `{index_text}`"),
                     true,
                 )
+            }
+            TypeErrorKind::ArrayIndexOutOfBounds { index, len } => Self::type_error(
+                "E0423",
+                "array index out of bounds",
+                source,
+                format!("array index {index} is out of bounds for length {len}"),
+            )
+            .label(
+                span,
+                range,
+                format!("index {index} is out of bounds for array length {len}"),
+                true,
+            ),
+            TypeErrorKind::InvalidArrayLength { len } => Self::type_error(
+                "E0424",
+                "invalid array length",
+                source,
+                format!("array length must be positive, found {len}"),
+            )
+            .label(span, range, "array length must be a positive integer", true),
+            TypeErrorKind::InvalidForIterator { ty } => {
+                let ty_text = Self::type_text(*ty, tys);
+                Self::type_error(
+                    "E0425",
+                    "invalid for iterator",
+                    source,
+                    format!("type `{ty_text}` cannot be iterated by `for`"),
+                )
+                .label(span, range, "expected an array expression here", true)
             }
             TypeErrorKind::UnknownField { base, field } => {
                 let base_text = Self::type_text(*base, tys);
@@ -688,6 +731,18 @@ impl Diagnostic {
                 )
                 .label(span, range, "this expression cannot be assigned to", true)
             }
+            TypeErrorKind::AssignThroughImmutableReference => Self::type_error(
+                "E0426",
+                "cannot assign through immutable reference",
+                source,
+                "cannot assign through an immutable reference",
+            )
+            .label(
+                span,
+                range,
+                "immutable reference cannot be used for assignment",
+                true,
+            ),
             TypeErrorKind::CannotBorrow { mutable, ty } => {
                 let ty_text = Self::type_text(*ty, tys);
                 let borrow = if *mutable { "mutable" } else { "shared" };

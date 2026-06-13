@@ -1143,19 +1143,19 @@ impl<'a> Lowerer<'a> {
     fn lower_for_stmt(&mut self, node: CSTNodeID) -> LowerResult<StmtKind> {
         let tag = self.get_prod_tag(node)?;
         match tag {
-            ProdTag::ForStmt => {
-                let [_, var_decl_node, _, range_node, block_node] =
+            ProdTag::ForStmt | ProdTag::ForStmtIter => {
+                let [_, var_decl_node, _, iter_node, block_node] =
                     self.expect_children::<5>(node)?;
 
                 let decl = self.lower_var_decl(var_decl_node)?;
-                let range = self.lower_expr(range_node)?;
+                let iter = self.lower_expr(iter_node)?;
                 let block = self.lower_block(block_node)?;
 
                 Ok(StmtKind::For {
                     mutable: decl.mutable,
                     var: decl.name,
                     ty: decl.ty,
-                    iter: range,
+                    iter,
                     body: block,
                 })
             }

@@ -38,6 +38,7 @@ pub struct TypeckCtx<'hir> {
 
     current_ret_ty: Option<TyId>,
     loop_break_tys: Vec<TyId>,
+    initialized_locals: HashSet<LocalId>,
 }
 
 impl<'hir> TypeckCtx<'hir> {
@@ -56,6 +57,7 @@ impl<'hir> TypeckCtx<'hir> {
             errors: vec![],
             current_ret_ty: None,
             loop_break_tys: vec![],
+            initialized_locals: HashSet::new(),
         }
     }
 
@@ -159,7 +161,15 @@ impl<'hir> TypeckCtx<'hir> {
             },
             HirTyKind::Array { elem, len } => TyKind::Array {
                 elem: self.lower_hir_ty(elem),
-                len: *len,
+                len: {
+                    if *len == 0 {
+                        self.emit_error(
+                            TypeErrorKind::InvalidArrayLength { len: *len },
+                            ty.span.clone(),
+                        );
+                    }
+                    *len
+                },
             },
             HirTyKind::Tuple(ty_list) => {
                 TyKind::Tuple(ty_list.iter().map(|ty| self.lower_hir_ty(ty)).collect())
@@ -211,6 +221,7 @@ impl<'hir> TypeckCtx<'hir> {
 
         for (param, param_ty) in sig.params.iter().zip(param_tys) {
             self.results.set_local_ty(param.local_id, param_ty);
+            self.mark_local_initialized(param.local_id);
         }
 
         self.check_body(body, ret_ty);
@@ -314,6 +325,9 @@ impl<'hir> TypeckCtx<'hir> {
         };
 
         self.check_pat(pat, final_ty);
+        if init.is_some() {
+            self.mark_pat_initialized(pat);
+        }
         self.tys.unit()
     }
 
@@ -409,7 +423,9 @@ impl<'hir> TypeckCtx<'hir> {
                 self.check_struct_lit_expr(def_id, &fields, span)
             }
             HirExprKind::Binary { op, lhs, rhs } => self.check_binary_expr(op, lhs, rhs, span),
-            HirExprKind::Call { callee, args } => self.check_call_expr(callee, &args, span),
+            HirExprKind::Call { callee, args } => {
+                self.check_call_expr(callee, &args, expected, span)
+            }
             HirExprKind::Assign { lhs, rhs } => self.check_assign_expr(lhs, rhs, span),
             HirExprKind::Block(block) => self.check_block(&block, expected),
             HirExprKind::If {
@@ -427,6 +443,13 @@ impl<'hir> TypeckCtx<'hir> {
                 body,
                 ..
             } => self.check_for_range_expr(local_id, ty.as_ref(), start, end, &body, span),
+            HirExprKind::ForIter {
+                local_id,
+                ty,
+                iter,
+                body,
+                ..
+            } => self.check_for_iter_expr(local_id, ty.as_ref(), iter, &body, span),
             HirExprKind::Return(value) => self.check_return_expr(value, span),
             HirExprKind::Break(value) => self.check_break_expr(value, span),
             HirExprKind::Continue => self.check_continue_expr(span),
@@ -451,15 +474,18 @@ impl<'hir> TypeckCtx<'hir> {
     /// 表示名字解析阶段已经报过错，这里返回 Error 类型以减少连锁错误。
     fn check_res(&mut self, res: Res, span: Span) -> TyId {
         match res {
-            Res::Local(local) => self
-                .results
-                .get_local_ty(local)
-                .copied()
-                .unwrap_or_else(|| {
-                    let error_ty = self.tys.error();
-                    self.emit_error(TypeErrorKind::CannotInferType { ty: error_ty }, span);
-                    error_ty
-                }),
+            Res::Local(local) => {
+                let ty = self.local_ty_without_read(local, span.clone());
+                if !self.initialized_locals.contains(&local) {
+                    let name = self
+                        .locals
+                        .get(local)
+                        .map(|local| local.name.clone())
+                        .unwrap_or_else(|| format!("{local:?}"));
+                    self.emit_error(TypeErrorKind::UninitializedLocal { name }, span);
+                }
+                ty
+            }
             Res::Def(def) => {
                 if self.defs.get(def).is_none() {
                     self.emit_internal("Resolved definition id is not present in DefTable!");
@@ -521,7 +547,13 @@ impl<'hir> TypeckCtx<'hir> {
     ///
     /// callee 必须解析到函数类型；参数数量必须一致；每个实参类型要能和对应形参类型
     /// 统一。调用表达式的类型是函数返回类型。
-    fn check_call_expr(&mut self, callee: Res, args: &[HirExprId], span: Span) -> TyId {
+    fn check_call_expr(
+        &mut self,
+        callee: Res,
+        args: &[HirExprId],
+        expected: Option<TyId>,
+        span: Span,
+    ) -> TyId {
         let callee_ty = self.check_res(callee, span.clone());
         let callee_ty = self.infer.resolve_ty(&self.tys, callee_ty);
 
@@ -574,6 +606,11 @@ impl<'hir> TypeckCtx<'hir> {
             }
         }
 
+        let ret = self.infer.resolve_ty(&self.tys, ret);
+        if matches!(self.tys.kind(ret), TyKind::Unit) && !self.expected_is_unit(expected) {
+            self.emit_error(TypeErrorKind::UnitValueUsedAsRvalue, span);
+        }
+
         ret
     }
 
@@ -591,6 +628,7 @@ impl<'hir> TypeckCtx<'hir> {
         }
         let rhs_ty = self.check_expr(rhs, Some(lhs_ty));
         self.unify_at(lhs_ty, rhs_ty, span);
+        self.mark_assignment_target_initialized(lhs);
         self.tys.unit()
     }
 
@@ -699,11 +737,53 @@ impl<'hir> TypeckCtx<'hir> {
             .unwrap_or(int_ty);
         self.unify_at(int_ty, local_ty, span.clone());
         self.results.set_local_ty(local_id, int_ty);
+        self.mark_local_initialized(local_id);
 
         let start_ty = self.check_expr(start, Some(int_ty));
         let end_ty = self.check_expr(end, Some(int_ty));
         self.unify_at(int_ty, start_ty, self.expr_span(start));
         self.unify_at(int_ty, end_ty, self.expr_span(end));
+
+        let unit_ty = self.tys.unit();
+        self.loop_break_tys.push(unit_ty);
+        self.check_block(body, Some(unit_ty));
+        self.loop_break_tys.pop();
+
+        unit_ty
+    }
+
+    /// 检查数组/表达式形式的 `for` 循环。
+    ///
+    /// 当前语言没有通用迭代器 trait，因此 v1 只把数组视为可迭代结构。循环变量类型
+    /// 来自数组元素类型，若用户写了显式类型则需要和元素类型统一。
+    fn check_for_iter_expr(
+        &mut self,
+        local_id: LocalId,
+        explicit_ty: Option<&HirTy>,
+        iter: HirExprId,
+        body: &HirBlock,
+        span: Span,
+    ) -> TyId {
+        let iter_ty = self.check_expr(iter, None);
+        let iter_ty = self.infer.resolve_ty(&self.tys, iter_ty);
+        let elem_ty = match self.tys.kind(iter_ty).clone() {
+            TyKind::Array { elem, .. } => elem,
+            TyKind::Error => self.tys.error(),
+            _ => {
+                self.emit_error(
+                    TypeErrorKind::InvalidForIterator { ty: iter_ty },
+                    span.clone(),
+                );
+                self.tys.error()
+            }
+        };
+
+        let local_ty = explicit_ty
+            .map(|ty| self.lower_hir_ty(ty))
+            .map(|explicit| self.unify_at(elem_ty, explicit, span.clone()))
+            .unwrap_or(elem_ty);
+        self.results.set_local_ty(local_id, local_ty);
+        self.mark_local_initialized(local_id);
 
         let unit_ty = self.tys.unit();
         self.loop_break_tys.push(unit_ty);
@@ -922,6 +1002,9 @@ impl<'hir> TypeckCtx<'hir> {
         };
 
         let ty = match expr_data.kind {
+            HirExprKind::Path(Res::Local(local)) => {
+                self.local_ty_without_read(local, expr_data.span)
+            }
             HirExprKind::Path(res) => self.check_res(res, expr_data.span),
             HirExprKind::Deref(base) => {
                 let base_ty = self.check_expr(base, None);
@@ -943,7 +1026,17 @@ impl<'hir> TypeckCtx<'hir> {
                 let base_ty = self.check_expr(base, None);
                 let base_ty = self.infer.resolve_ty(&self.tys, base_ty);
                 match self.tys.kind(base_ty).clone() {
-                    TyKind::Array { elem, .. } => elem,
+                    TyKind::Array { elem, len } => {
+                        if let Some(index) = self.const_int_expr_value(index) {
+                            if index < 0 || index as usize >= len {
+                                self.emit_error(
+                                    TypeErrorKind::ArrayIndexOutOfBounds { index, len },
+                                    expr_data.span.clone(),
+                                );
+                            }
+                        }
+                        elem
+                    }
                     TyKind::Error => self.tys.error(),
                     _ => {
                         self.emit_error(
@@ -1043,7 +1136,7 @@ impl<'hir> TypeckCtx<'hir> {
     ///
     /// 局部变量需要声明为 mutable；索引和字段访问继承 base 的可赋值性；解引用在
     /// 当前阶段暂时允许写入，完整限制留给后续借用检查。
-    fn is_assignable(&self, expr: HirExprId) -> bool {
+    fn is_assignable(&mut self, expr: HirExprId) -> bool {
         let Some(expr_data) = self.hir.expr(expr) else {
             return false;
         };
@@ -1054,7 +1147,9 @@ impl<'hir> TypeckCtx<'hir> {
                 .get(*local)
                 .map(|local| local.mutable)
                 .unwrap_or(false),
-            HirExprKind::Deref(_) => true,
+            HirExprKind::Deref(base) => {
+                self.deref_base_is_mutable_ref(*base, expr_data.span.clone())
+            }
             HirExprKind::Index { base, .. }
             | HirExprKind::Field { base, .. }
             | HirExprKind::NamedField { base, .. } => self.is_assignable(*base),
@@ -1259,6 +1354,91 @@ impl<'hir> TypeckCtx<'hir> {
             }
         }
         self.tys.int()
+    }
+
+    /// 判断调用所在上下文是否明确期望 `()`。
+    ///
+    /// 用于区分 `f();` 这种丢弃 unit 返回值的语句和 `let x = f();` 这种把 unit
+    /// 当作右值保存的用法。
+    fn expected_is_unit(&mut self, expected: Option<TyId>) -> bool {
+        expected
+            .map(|ty| {
+                let ty = self.infer.resolve_ty(&self.tys, ty);
+                matches!(self.tys.kind(ty), TyKind::Unit | TyKind::Error)
+            })
+            .unwrap_or(false)
+    }
+
+    /// 读取局部变量类型，但不把这个动作视为“读取变量值”。
+    ///
+    /// 赋值左侧 `a = 1` 需要知道 `a` 的类型，却不能因为 `a` 尚未初始化就报错。
+    fn local_ty_without_read(&mut self, local: LocalId, span: Span) -> TyId {
+        self.results
+            .get_local_ty(local)
+            .copied()
+            .unwrap_or_else(|| {
+                let error_ty = self.tys.error();
+                self.emit_error(TypeErrorKind::CannotInferType { ty: error_ty }, span);
+                error_ty
+            })
+    }
+
+    /// 把一个局部变量标记为已经初始化。
+    fn mark_local_initialized(&mut self, local: LocalId) {
+        self.initialized_locals.insert(local);
+    }
+
+    /// 把 pattern 中的所有绑定标记为已经初始化。
+    fn mark_pat_initialized(&mut self, pat: &HirPat) {
+        match &pat.kind {
+            HirPatKind::Wildcard => {}
+            HirPatKind::Binding { local_id, .. } => self.mark_local_initialized(*local_id),
+            HirPatKind::Tuple(elems) => {
+                for elem in elems {
+                    self.mark_pat_initialized(elem);
+                }
+            }
+            HirPatKind::Struct { fields, .. } => {
+                for field in fields {
+                    self.mark_pat_initialized(&field.pat);
+                }
+            }
+        }
+    }
+
+    /// 赋值完成后，若左侧是直接局部变量，则该变量变为已初始化。
+    ///
+    /// 字段、索引和解引用赋值不会让整个 base 变量从未初始化变为已初始化；它们的
+    /// base 在 `check_place_expr` 中已经作为 place base 被检查过。
+    fn mark_assignment_target_initialized(&mut self, expr: HirExprId) {
+        let Some(expr_data) = self.hir.expr(expr) else {
+            return;
+        };
+        if let HirExprKind::Path(Res::Local(local)) = expr_data.kind {
+            self.mark_local_initialized(local);
+        }
+    }
+
+    /// 判断解引用赋值的 base 是否为可变引用。
+    fn deref_base_is_mutable_ref(&mut self, base: HirExprId, span: Span) -> bool {
+        let base_ty = self.check_expr(base, None);
+        let base_ty = self.infer.resolve_ty(&self.tys, base_ty);
+        match self.tys.kind(base_ty) {
+            TyKind::Ref { mutable: true, .. } | TyKind::Error => true,
+            TyKind::Ref { mutable: false, .. } => {
+                self.emit_error(TypeErrorKind::AssignThroughImmutableReference, span);
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// 尝试读取常量整数字面量，用于数组下标静态范围检查。
+    fn const_int_expr_value(&self, expr: HirExprId) -> Option<i32> {
+        match self.hir.expr(expr).map(|expr| &expr.kind) {
+            Some(HirExprKind::Int(value)) => Some(*value),
+            _ => None,
+        }
     }
 
     /// 报告一个内部错误，位置使用空 span。

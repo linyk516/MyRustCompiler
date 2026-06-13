@@ -177,6 +177,10 @@ impl<'hir> BorrowCheckCtx<'hir> {
                 self.check_expr_as_temporary(*end);
                 self.check_block(body);
             }
+            HirExprKind::ForIter { iter, body, .. } => {
+                self.check_expr_as_temporary(*iter);
+                self.check_block(body);
+            }
             HirExprKind::Return(value) | HirExprKind::Break(value) => {
                 if let Some(value) = value {
                     self.check_expr_as_temporary(*value);

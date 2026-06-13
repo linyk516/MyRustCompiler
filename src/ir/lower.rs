@@ -432,6 +432,9 @@ impl<'a> FunctionLowerer<'a> {
                 end,
                 body,
             } => self.lower_for_range_expr(local, start, end, &body, expr_ty, span),
+            ThirExprKind::ForIter { local, iter, body } => {
+                self.lower_for_iter_expr(local, iter, &body, expr_ty, span)
+            }
             ThirExprKind::Return(value) => {
                 let value = match value {
                     Some(value) => {
@@ -936,6 +939,101 @@ impl<'a> FunctionLowerer<'a> {
         Ok(self.unit_value())
     }
 
+    fn lower_for_iter_expr(
+        &mut self,
+        local: ThirLocalId,
+        iter: ThirExprId,
+        body: &ThirBlock,
+        _ty: TyId,
+        span: Span,
+    ) -> IrLowerResult<IrValueId> {
+        let local_data = self.body.local(local).ok_or_else(|| {
+            self.error(
+                IrLowerErrorKind::MissingLocal { id: local.index() },
+                span.clone(),
+            )
+        })?;
+        let local_ty = self.ir_ty(local_data.ty);
+        let local_addr = self.local_addr(local, &span)?;
+
+        let iter_ty = self.expr(iter)?.ty;
+        let (elem_ty, len) = match self.tys.kind(iter_ty) {
+            TyKind::Array { elem, len } => (*elem, *len),
+            _ => {
+                return Err(self.error(
+                    IrLowerErrorKind::UnsupportedValue {
+                        message: "for iteration currently expects an array".to_string(),
+                    },
+                    span,
+                ));
+            }
+        };
+        let iter_ir_ty = self.ir_ty(iter_ty);
+        let iter_addr = self.lower_expr_addr(iter)?;
+        let index_addr =
+            self.create_temp_slot_with_ir_ty(IrTy::I32, iter_ty, "for.index", span.clone())?;
+        let zero = self.builder.const_int(0, IrTy::I32);
+        self.emit_store_to_addr(zero, index_addr, IrTy::I32, span.clone())?;
+
+        let cond_bb = self.builder.alloc_block("for.iter.cond");
+        let body_bb = self.builder.alloc_block("for.iter.body");
+        let step_bb = self.builder.alloc_block("for.iter.step");
+        let exit_bb = self.builder.alloc_block("for.iter.end");
+        self.builder
+            .set_terminator(IrTerminator::Br { target: cond_bb })?;
+
+        self.builder.switch_to(cond_bb);
+        let index = self
+            .builder
+            .emit_load(IrTy::I32, index_addr, span.clone())?;
+        let len_value = self.builder.const_int(len as i32, IrTy::I32);
+        let cond =
+            self.builder
+                .emit_icmp(IrIcmpPred::Slt, IrTy::I32, index, len_value, span.clone())?;
+        self.builder.set_terminator(IrTerminator::CondBr {
+            cond,
+            then_bb: body_bb,
+            else_bb: exit_bb,
+        })?;
+
+        self.builder.switch_to(body_bb);
+        let zero = self.builder.const_int(0, IrTy::I32);
+        let elem_addr =
+            self.builder
+                .emit_gep(iter_ir_ty, iter_addr, vec![zero, index], span.clone())?;
+        let elem_value = self
+            .builder
+            .emit_load(self.ir_ty(elem_ty), elem_addr, span.clone())?;
+        self.emit_store_to_addr(elem_value, local_addr, local_ty, span.clone())?;
+
+        self.loop_stack.push(LoopContext {
+            break_bb: exit_bb,
+            continue_bb: step_bb,
+            break_value: None,
+        });
+        self.lower_block(body)?;
+        self.loop_stack.pop();
+        if self.builder.can_emit()? {
+            self.builder
+                .set_terminator(IrTerminator::Br { target: step_bb })?;
+        }
+
+        self.builder.switch_to(step_bb);
+        let index = self
+            .builder
+            .emit_load(IrTy::I32, index_addr, span.clone())?;
+        let one = self.builder.const_int(1, IrTy::I32);
+        let next =
+            self.builder
+                .emit_binary(IrBinaryOp::Add, IrTy::I32, index, one, span.clone())?;
+        self.emit_store_to_addr(next, index_addr, IrTy::I32, span.clone())?;
+        self.builder
+            .set_terminator(IrTerminator::Br { target: cond_bb })?;
+
+        self.builder.switch_to(exit_bb);
+        Ok(self.unit_value())
+    }
+
     fn lower_expr_to_optional_value(
         &mut self,
         expr: ThirExprId,
@@ -1159,6 +1257,28 @@ impl<'a> FunctionLowerer<'a> {
         span: Span,
     ) -> IrLowerResult<IrValueId> {
         let value_ty = self.ir_ty(source_ty);
+        self.builder.emit_alloca_slot(
+            IrSlot {
+                thir_local: None,
+                name: name.to_string(),
+                mutable: true,
+                source_ty,
+                value_ty: value_ty.clone(),
+                addr: None,
+                span: span.clone(),
+            },
+            value_ty,
+            span,
+        )
+    }
+
+    fn create_temp_slot_with_ir_ty(
+        &mut self,
+        value_ty: IrTy,
+        source_ty: TyId,
+        name: &str,
+        span: Span,
+    ) -> IrLowerResult<IrValueId> {
         self.builder.emit_alloca_slot(
             IrSlot {
                 thir_local: None,
