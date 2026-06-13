@@ -2,9 +2,23 @@
 name = "MyRustCompiler"
 version = "0.1.0"
 edition = "2024"
+default-run = "MyRustCompiler"
+
+[features]
+default = []
+gui = ["dep:tauri", "dep:tauri-build"]
 
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde-binary-adv = "1.1.0"
 either = "1"
+tauri = { version = "2", optional = true }
+
+[build-dependencies]
+tauri-build = { version = "2", optional = true }
+
+[[bin]]
+name = "myrust-gui"
+path = "src/gui_main.rs"
+required-features = ["gui"]

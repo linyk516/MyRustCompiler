@@ -23,7 +23,10 @@ use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
+pub mod backend;
 pub mod diagnostic;
+#[cfg(feature = "gui")]
+pub mod gui_api;
 pub mod output;
 pub mod render;
 pub mod source;
