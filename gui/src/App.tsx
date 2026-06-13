@@ -1,6 +1,8 @@
 import Editor from "@monaco-editor/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useMemo, useState } from "react";
+import { StageOutput } from "./StageOutput";
+import { StageKey } from "./stageParsers";
 
 type CompileResponse = {
   success: boolean;
@@ -22,17 +24,6 @@ type BuildRunResponse = {
   exit_code: number | null;
   backend_error: string | null;
 };
-
-type StageKey =
-  | "diagnostics"
-  | "tokens"
-  | "cst"
-  | "ast"
-  | "hir"
-  | "typecheck"
-  | "thir"
-  | "ir"
-  | "run";
 
 const TABS: Array<{ key: StageKey; label: string }> = [
   { key: "diagnostics", label: "Diagnostics" },
@@ -222,7 +213,7 @@ function App() {
           <div className="pane-title">Source</div>
           <Editor
             language="rust"
-            theme="vs-dark"
+            theme="vs"
             value={source}
             onChange={(value) => setSource(value ?? "")}
             options={{
@@ -261,7 +252,7 @@ function App() {
             </label>
           )}
 
-          <pre className="stage-output">{stageText}</pre>
+          <StageOutput stage={activeTab} text={stageText} />
         </div>
       </section>
     </main>
