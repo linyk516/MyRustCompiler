@@ -5,9 +5,9 @@ use crate::{
         node::{AstNode, NodeIdAllocator},
         ty::{
             BinaryOp, Block, BlockKind, ElseBranch, Expr, ExprKind, ExternFnDecl, FnDecl, FnSig,
-            Ident, Item, ItemKind, Param, Place, PlaceKind, Program, Stmt,
+            Ident, Item, ItemKind, Param, Pat, PatKind, Place, PlaceKind, Program, Stmt,
             StmtKind::{self},
-            Ty, TyKind,
+            StructDecl, StructField, StructLitField, StructPatField, Ty, TyKind,
         },
     },
     compiler::source::SourceFile,
@@ -20,6 +20,7 @@ use crate::{
         CST, ProductionId,
         cst::{CSTNode, CSTNodeID},
     },
+    typecheck::ty::IntKind,
 };
 
 pub struct Lowerer<'a> {
@@ -42,6 +43,11 @@ pub type LowerResult<T> = Result<T, LowerError>;
 struct VarDecl {
     mutable: bool,
     name: Ident,
+    ty: Option<Ty>,
+}
+
+struct LetDecl {
+    pat: Pat,
     ty: Option<Ty>,
 }
 
@@ -108,7 +114,67 @@ impl<'a> Lowerer<'a> {
                 let item = ItemKind::ExternFn(self.lower_extern_fn_decl(extern_fn_decl_node)?);
                 Ok(self.make_item(item, span))
             }
-            _ => Err(self.unexpected_tag(node, "FnDecl, ExternFnDecl")),
+            ProdTag::DeclStructDecl => {
+                let [struct_decl_node] = self.expect_children::<1>(node)?;
+                let item = ItemKind::Struct(self.lower_struct_decl(struct_decl_node)?);
+                Ok(self.make_item(item, span))
+            }
+            _ => Err(self.unexpected_tag(node, "FnDecl, ExternFnDecl, StructDecl")),
+        }
+    }
+
+    fn lower_struct_decl(&mut self, node: CSTNodeID) -> LowerResult<StructDecl> {
+        let tag = self.get_prod_tag(node)?;
+
+        match tag {
+            ProdTag::StructDeclNamed => {
+                let [_, id_node, _, fields_node, _] = self.expect_children::<5>(node)?;
+                let name = self.lower_ident(id_node)?;
+                let fields = self.lower_struct_field_list(fields_node)?;
+
+                Ok(StructDecl { name, fields })
+            }
+            _ => Err(self.unexpected_tag(node, "StructDeclNamed")),
+        }
+    }
+
+    fn lower_struct_field_list(&mut self, node: CSTNodeID) -> LowerResult<Vec<StructField>> {
+        let mut cur_node = node;
+        let mut fields = vec![];
+
+        loop {
+            let tag = self.get_prod_tag(cur_node)?;
+            match tag {
+                ProdTag::StructFieldListEmpty => break,
+                ProdTag::StructFieldListField => {
+                    let [field_node] = self.expect_children::<1>(cur_node)?;
+                    fields.push(self.lower_struct_field(field_node)?);
+                    break;
+                }
+                ProdTag::StructFieldListFieldList => {
+                    let [field_node, _, next_node] = self.expect_children::<3>(cur_node)?;
+                    fields.push(self.lower_struct_field(field_node)?);
+                    cur_node = next_node;
+                }
+                _ => return Err(self.unexpected_tag(cur_node, "Empty, Field, FieldList")),
+            }
+        }
+
+        Ok(fields)
+    }
+
+    fn lower_struct_field(&mut self, node: CSTNodeID) -> LowerResult<StructField> {
+        let tag = self.get_prod_tag(node)?;
+
+        match tag {
+            ProdTag::StructFieldNamed => {
+                let [id_node, _, ty_node] = self.expect_children::<3>(node)?;
+                let name = self.lower_ident(id_node)?;
+                let ty = self.lower_ty(ty_node)?;
+
+                Ok(StructField { name, ty })
+            }
+            _ => Err(self.unexpected_tag(node, "StructFieldNamed")),
         }
     }
 
@@ -387,11 +453,10 @@ impl<'a> Lowerer<'a> {
                 let [var_decl_node] = self.expect_children::<1>(node)?;
                 let var_decl_tag = self.get_prod_tag(var_decl_node)?;
                 assert_eq!(var_decl_tag, ProdTag::VarDeclStmt);
-                let [_, var_decl_node, _] = self.expect_children::<3>(var_decl_node)?;
-                let decl = self.lower_var_decl(var_decl_node)?;
+                let [_, let_decl_node, _] = self.expect_children::<3>(var_decl_node)?;
+                let decl = self.lower_let_decl(let_decl_node)?;
                 StmtKind::Let {
-                    mutable: decl.mutable,
-                    name: decl.name,
+                    pat: decl.pat,
                     ty: decl.ty,
                     init: None,
                 }
@@ -401,13 +466,12 @@ impl<'a> Lowerer<'a> {
                 let var_init_tag = self.get_prod_tag(var_init_node)?;
                 assert_eq!(var_init_tag, ProdTag::VarInitStmt);
 
-                let [_, var_decl_node, _, expr_node, _] =
+                let [_, let_decl_node, _, expr_node, _] =
                     self.expect_children::<5>(var_init_node)?;
-                let decl = self.lower_var_decl(var_decl_node)?;
+                let decl = self.lower_let_decl(let_decl_node)?;
                 let expr = self.lower_expr(expr_node)?;
                 StmtKind::Let {
-                    mutable: decl.mutable,
-                    name: decl.name,
+                    pat: decl.pat,
                     ty: decl.ty,
                     init: Some(expr),
                 }
@@ -492,6 +556,173 @@ impl<'a> Lowerer<'a> {
                 })
             }
             _ => return Err(self.unexpected_tag(node, "VarDeclNoTy, VarDeclWithTy")),
+        }
+    }
+
+    fn lower_let_decl(&mut self, node: CSTNodeID) -> LowerResult<LetDecl> {
+        let tag = self.get_prod_tag(node)?;
+
+        match tag {
+            ProdTag::LetDeclNoTy => {
+                let [pat_node] = self.expect_children::<1>(node)?;
+                Ok(LetDecl {
+                    pat: self.lower_pat(pat_node)?,
+                    ty: None,
+                })
+            }
+            ProdTag::LetDeclWithTy => {
+                let [pat_node, _, ty_node] = self.expect_children::<3>(node)?;
+                Ok(LetDecl {
+                    pat: self.lower_pat(pat_node)?,
+                    ty: Some(self.lower_ty(ty_node)?),
+                })
+            }
+            _ => Err(self.unexpected_tag(node, "LetDeclNoTy, LetDeclWithTy")),
+        }
+    }
+
+    fn lower_pat(&mut self, node: CSTNodeID) -> LowerResult<Pat> {
+        let tag = self.get_prod_tag(node)?;
+        let span = self.get_node_span(node);
+
+        let kind = match tag {
+            ProdTag::PatIdent => {
+                let [id_node, tail_node] = self.expect_children::<2>(node)?;
+                let name = self.lower_ident(id_node)?;
+                self.lower_pat_ident_tail(name, tail_node, span.clone())?
+            }
+            ProdTag::PatMutIdent => {
+                let [_, id_node] = self.expect_children::<2>(node)?;
+                let name = self.lower_ident(id_node)?;
+                PatKind::Binding {
+                    mutable: true,
+                    name,
+                }
+            }
+            ProdTag::PatTuple => {
+                let [_, inner_node, _] = self.expect_children::<3>(node)?;
+                PatKind::Tuple(self.lower_pat_tuple_inner(inner_node)?)
+            }
+            _ => return Err(self.unexpected_tag(node, "PatIdent, PatMutIdent, PatTuple")),
+        };
+
+        Ok(AstNode::new(self.ids.alloc(), kind, span))
+    }
+
+    fn lower_pat_ident_tail(
+        &mut self,
+        name: Ident,
+        tail_node: CSTNodeID,
+        span: Span,
+    ) -> LowerResult<PatKind> {
+        let tag = self.get_prod_tag(tail_node)?;
+        match tag {
+            ProdTag::PatIdentTailEmpty if name.kind == "_" => Ok(PatKind::Wildcard),
+            ProdTag::PatIdentTailEmpty => Ok(PatKind::Binding {
+                mutable: false,
+                name,
+            }),
+            ProdTag::PatIdentTailStruct => {
+                let [_, field_list_node, _] = self.expect_children::<3>(tail_node)?;
+                Ok(PatKind::Struct {
+                    name,
+                    fields: self.lower_struct_pat_field_list(field_list_node)?,
+                })
+            }
+            _ => Err(LowerError {
+                message: format!(
+                    "Unexpected production tag {:?} on pattern tail.",
+                    self.get_prod_tag(tail_node).ok()
+                ),
+                span,
+            }),
+        }
+    }
+
+    fn lower_pat_tuple_inner(&mut self, node: CSTNodeID) -> LowerResult<Vec<Pat>> {
+        let tag = self.get_prod_tag(node)?;
+
+        match tag {
+            ProdTag::PatTupleInnerEmpty => Ok(vec![]),
+            ProdTag::PatTupleInnerPat => {
+                let [pat_node, _, pat_list_node] = self.expect_children::<3>(node)?;
+                let mut pats = vec![self.lower_pat(pat_node)?];
+                pats.append(&mut self.lower_pat_list(pat_list_node)?);
+                Ok(pats)
+            }
+            _ => Err(self.unexpected_tag(node, "PatTupleInnerEmpty, PatTupleInnerPat")),
+        }
+    }
+
+    fn lower_pat_list(&mut self, node: CSTNodeID) -> LowerResult<Vec<Pat>> {
+        let mut cur_node = node;
+        let mut pats = vec![];
+
+        loop {
+            let tag = self.get_prod_tag(cur_node)?;
+            match tag {
+                ProdTag::PatListEmpty => break,
+                ProdTag::PatListPat => {
+                    let [pat_node] = self.expect_children::<1>(cur_node)?;
+                    pats.push(self.lower_pat(pat_node)?);
+                    break;
+                }
+                ProdTag::PatListPatList => {
+                    let [pat_node, _, next_node] = self.expect_children::<3>(cur_node)?;
+                    pats.push(self.lower_pat(pat_node)?);
+                    cur_node = next_node;
+                }
+                _ => return Err(self.unexpected_tag(cur_node, "Empty, Pat, PatList")),
+            }
+        }
+
+        Ok(pats)
+    }
+
+    fn lower_struct_pat_field_list(&mut self, node: CSTNodeID) -> LowerResult<Vec<StructPatField>> {
+        let mut cur_node = node;
+        let mut fields = vec![];
+
+        loop {
+            let tag = self.get_prod_tag(cur_node)?;
+            match tag {
+                ProdTag::StructPatFieldListEmpty => break,
+                ProdTag::StructPatFieldListField => {
+                    let [field_node] = self.expect_children::<1>(cur_node)?;
+                    fields.push(self.lower_struct_pat_field(field_node)?);
+                    break;
+                }
+                ProdTag::StructPatFieldListFieldList => {
+                    let [field_node, _, next_node] = self.expect_children::<3>(cur_node)?;
+                    fields.push(self.lower_struct_pat_field(field_node)?);
+                    cur_node = next_node;
+                }
+                _ => return Err(self.unexpected_tag(cur_node, "Empty, Field, FieldList")),
+            }
+        }
+
+        Ok(fields)
+    }
+
+    fn lower_struct_pat_field(&mut self, node: CSTNodeID) -> LowerResult<StructPatField> {
+        let tag = self.get_prod_tag(node)?;
+
+        match tag {
+            ProdTag::StructPatFieldNamed => {
+                let [id_node] = self.expect_children::<1>(node)?;
+                let name = self.lower_ident(id_node)?;
+                let pat = AstNode::new(
+                    self.ids.alloc(),
+                    PatKind::Binding {
+                        mutable: false,
+                        name: name.clone(),
+                    },
+                    name.span.clone(),
+                );
+
+                Ok(StructPatField { name, pat })
+            }
+            _ => Err(self.unexpected_tag(node, "StructPatFieldNamed")),
         }
     }
 
@@ -679,6 +910,8 @@ impl<'a> Lowerer<'a> {
 
                 self.lower_num(num_node)
             }
+            ProdTag::FactorTrue => Ok(self.make_expr(ExprKind::Bool(true), span)),
+            ProdTag::FactorFalse => Ok(self.make_expr(ExprKind::Bool(false), span)),
             ProdTag::FactorString => {
                 let [literal_string_node] = self.expect_children::<1>(node)?;
                 let value = self.lower_string_literal(literal_string_node)?;
@@ -705,7 +938,49 @@ impl<'a> Lowerer<'a> {
 
                 Ok(self.make_expr(kind, span))
             }
-            _ => return Err(self.unexpected_tag(node, "Num, String, LVal, GroupedExpr, Call")),
+            _ => {
+                return Err(self.unexpected_tag(node, "Num, String, LVal, GroupedExpr, Call"));
+            }
+        }
+    }
+
+    fn lower_struct_lit_field_list(&mut self, node: CSTNodeID) -> LowerResult<Vec<StructLitField>> {
+        let mut cur_node = node;
+        let mut fields = vec![];
+
+        loop {
+            let tag = self.get_prod_tag(cur_node)?;
+            match tag {
+                ProdTag::StructLitFieldListEmpty => break,
+                ProdTag::StructLitFieldListField => {
+                    let [field_node] = self.expect_children::<1>(cur_node)?;
+                    fields.push(self.lower_struct_lit_field(field_node)?);
+                    break;
+                }
+                ProdTag::StructLitFieldListFieldList => {
+                    let [field_node, _, next_node] = self.expect_children::<3>(cur_node)?;
+                    fields.push(self.lower_struct_lit_field(field_node)?);
+                    cur_node = next_node;
+                }
+                _ => return Err(self.unexpected_tag(cur_node, "Empty, Field, FieldList")),
+            }
+        }
+
+        Ok(fields)
+    }
+
+    fn lower_struct_lit_field(&mut self, node: CSTNodeID) -> LowerResult<StructLitField> {
+        let tag = self.get_prod_tag(node)?;
+
+        match tag {
+            ProdTag::StructLitFieldNamed => {
+                let [id_node, _, expr_node] = self.expect_children::<3>(node)?;
+                let name = self.lower_ident(id_node)?;
+                let expr = self.lower_expr(expr_node)?;
+
+                Ok(StructLitField { name, expr })
+            }
+            _ => Err(self.unexpected_tag(node, "StructLitFieldNamed")),
         }
     }
 
@@ -992,14 +1267,24 @@ impl<'a> Lowerer<'a> {
 
         match tag {
             ProdTag::AddrElemIdent => {
-                let [ident_node] = self.expect_children(node)?;
-                let name = self.lower_ident(ident_node)?;
+                let children = self.get_children(node)?.to_vec();
+                match children.as_slice() {
+                    [ident_node] => {
+                        let name = self.lower_ident(*ident_node)?;
+                        let kind = PlaceKind::Local(name);
+                        let place = self.make_place(kind, span.clone());
 
-                let kind = PlaceKind::Local(name);
-                let place = self.make_place(kind, span.clone());
-
-                let kind = ExprKind::Place(place);
-                Ok(self.make_expr(kind, span))
+                        Ok(self.make_expr(ExprKind::Place(place), span))
+                    }
+                    [ident_node, tail_node] => {
+                        let name = self.lower_ident(*ident_node)?;
+                        self.lower_addr_elem_ident_tail_expr(name, *tail_node, span)
+                    }
+                    _ => Err(LowerError {
+                        message: format!("expected 1 or 2 children, found {}", children.len()),
+                        span,
+                    }),
+                }
             }
             ProdTag::AddrElemBlockExpr => {
                 let [block_expr] = self.expect_children(node)?;
@@ -1062,7 +1347,33 @@ impl<'a> Lowerer<'a> {
                 let place = self.lower_addr_elem_as_place(node)?;
                 Ok(self.make_expr(ExprKind::Place(place), span))
             }
+            ProdTag::AddrElemNamedField => {
+                let place = self.lower_addr_elem_as_place(node)?;
+                Ok(self.make_expr(ExprKind::Place(place), span))
+            }
             _ => return Err(self.unexpected_tag(node, "AddrElem, Ref, RefMut")),
+        }
+    }
+
+    fn lower_addr_elem_ident_tail_expr(
+        &mut self,
+        name: Ident,
+        tail_node: CSTNodeID,
+        span: Span,
+    ) -> LowerResult<Expr> {
+        let tag = self.get_prod_tag(tail_node)?;
+        match tag {
+            ProdTag::AddrElemIdentTailEmpty => {
+                let place = self.make_place(PlaceKind::Local(name), span.clone());
+                Ok(self.make_expr(ExprKind::Place(place), span))
+            }
+            ProdTag::AddrElemIdentTailStructLit => {
+                let [_, field_list_node, _] = self.expect_children::<3>(tail_node)?;
+                let fields = self.lower_struct_lit_field_list(field_list_node)?;
+
+                Ok(self.make_expr(ExprKind::StructLit { name, fields }, span))
+            }
+            _ => Err(self.unexpected_tag(tail_node, "Empty, StructLit")),
         }
     }
 
@@ -1106,12 +1417,31 @@ impl<'a> Lowerer<'a> {
 
         match tag {
             ProdTag::AddrElemIdent => {
-                let [id_node] = self.expect_children(node)?;
-                let ident = self.lower_ident(id_node)?;
-
-                let kind = PlaceKind::Local(ident);
-
-                Ok(self.make_place(kind, span))
+                let children = self.get_children(node)?.to_vec();
+                match children.as_slice() {
+                    [id_node] => {
+                        let ident = self.lower_ident(*id_node)?;
+                        Ok(self.make_place(PlaceKind::Local(ident), span))
+                    }
+                    [id_node, tail_node] => {
+                        let tag = self.get_prod_tag(*tail_node)?;
+                        match tag {
+                            ProdTag::AddrElemIdentTailEmpty => {
+                                let ident = self.lower_ident(*id_node)?;
+                                Ok(self.make_place(PlaceKind::Local(ident), span))
+                            }
+                            ProdTag::AddrElemIdentTailStructLit => Err(LowerError {
+                                message: "Struct literal cannot be used as a place.".to_string(),
+                                span,
+                            }),
+                            _ => Err(self.unexpected_tag(*tail_node, "Empty, StructLit")),
+                        }
+                    }
+                    _ => Err(LowerError {
+                        message: format!("expected 1 or 2 children, found {}", children.len()),
+                        span,
+                    }),
+                }
             }
             ProdTag::AddrElemIndex => {
                 let [addr_elem_node, _, expr_node, _] = self.expect_children::<4>(node)?;
@@ -1136,6 +1466,13 @@ impl<'a> Lowerer<'a> {
                 };
 
                 Ok(self.make_place(PlaceKind::Field { base, index }, span))
+            }
+            ProdTag::AddrElemNamedField => {
+                let [addr_elem_node, _, id_node] = self.expect_children::<3>(node)?;
+                let base = Box::new(self.lower_addr_elem_as_place(addr_elem_node)?);
+                let name = self.lower_ident(id_node)?;
+
+                Ok(self.make_place(PlaceKind::NamedField { base, name }, span))
             }
             _ => return Err(self.unexpected_tag(node, "AddrElem, Ref, RefMut")),
         }
@@ -1172,8 +1509,24 @@ impl<'a> Lowerer<'a> {
         let span = self.get_node_span(node);
 
         match tag {
-            ProdTag::TyI32 => Ok(self.make_ty(TyKind::I32, span)),
+            ProdTag::TyI8 => Ok(self.make_ty(TyKind::Int(IntKind::I8), span)),
+            ProdTag::TyI16 => Ok(self.make_ty(TyKind::Int(IntKind::I16), span)),
+            ProdTag::TyI32 => Ok(self.make_ty(TyKind::Int(IntKind::I32), span)),
+            ProdTag::TyI64 => Ok(self.make_ty(TyKind::Int(IntKind::I64), span)),
+            ProdTag::TyU8 => Ok(self.make_ty(TyKind::Int(IntKind::U8), span)),
+            ProdTag::TyU16 => Ok(self.make_ty(TyKind::Int(IntKind::U16), span)),
+            ProdTag::TyU32 => Ok(self.make_ty(TyKind::Int(IntKind::U32), span)),
+            ProdTag::TyU64 => Ok(self.make_ty(TyKind::Int(IntKind::U64), span)),
+            ProdTag::TyUsize => Ok(self.make_ty(TyKind::Int(IntKind::Usize), span)),
+            ProdTag::TyIsize => Ok(self.make_ty(TyKind::Int(IntKind::Isize), span)),
+            ProdTag::TyBool => Ok(self.make_ty(TyKind::Bool, span)),
             ProdTag::TyStr => Ok(self.make_ty(TyKind::Str, span)),
+            ProdTag::TyAdt => {
+                let [id_node] = self.expect_children::<1>(node)?;
+                let name = self.lower_ident(id_node)?;
+
+                Ok(self.make_ty(TyKind::Adt(name), span))
+            }
             ProdTag::TyArray => {
                 let [_, ty_node, _, num_node, _] = self.expect_children(node)?;
 
@@ -1225,7 +1578,7 @@ impl<'a> Lowerer<'a> {
 
                 Ok(self.make_ty(kind, span))
             }
-            _ => return Err(self.unexpected_tag(node, "I32, Str, Array, Ref, RefMut, Tuple")),
+            _ => return Err(self.unexpected_tag(node, "I32, Str, Adt, Array, Ref, RefMut, Tuple")),
         }
     }
 

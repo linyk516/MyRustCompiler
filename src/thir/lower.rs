@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use crate::{
     hir::{
         id::{DefId, HirBodyId, HirExprId, HirItemId, HirStmtId, LocalId},
-        node::{HirBlock, HirExprKind, HirFnSig, HirItemKind, HirProgram, HirStmtKind},
+        node::{
+            HirBlock, HirExprKind, HirFnSig, HirItemKind, HirPat, HirPatKind, HirProgram,
+            HirStmtKind,
+        },
         res::Res,
         table::{DefTable, LocalTable},
     },
@@ -12,8 +15,8 @@ use crate::{
         error::{ThirLowerError, ThirLowerErrorKind},
         id::{ThirExprId, ThirLocalId, ThirStmtId},
         node::{
-            ThirBlock, ThirBody, ThirExpr, ThirExprKind, ThirLocal, ThirPlace, ThirPlaceKind,
-            ThirProgram, ThirStmt, ThirStmtKind,
+            ThirBlock, ThirBody, ThirExpr, ThirExprKind, ThirLocal, ThirPat, ThirPatKind,
+            ThirPlace, ThirPlaceKind, ThirProgram, ThirStmt, ThirStmtKind,
         },
         output::ThirOutput,
     },
@@ -91,6 +94,7 @@ impl<'hir> ThirLowerCtx<'hir> {
         match item_data.kind {
             HirItemKind::Fn(hir_fn) => self.lower_fn(item_data.def_id, hir_fn.body, &hir_fn.sig),
             HirItemKind::ExternFn(_) => Ok(()),
+            HirItemKind::Struct(_) => Ok(()),
         }
     }
 
@@ -166,19 +170,13 @@ impl<'hir> ThirLowerCtx<'hir> {
         let ty = self.stmt_ty(stmt, &stmt_data.span)?;
         let span = stmt_data.span.clone();
         let kind = match stmt_data.kind {
-            HirStmtKind::Let {
-                local_id,
-                name,
-                mutable,
-                init,
-                ..
-            } => {
+            HirStmtKind::Let { pat, init, .. } => {
                 let init = match init {
                     Some(init) => Some(self.lower_expr(init)?),
                     None => None,
                 };
-                let local = self.declare_local(local_id, name, mutable, span.clone())?;
-                ThirStmtKind::Let { local, init }
+                let pat = self.lower_pat(&pat)?;
+                ThirStmtKind::Let { pat, init }
             }
             HirStmtKind::Expr(expr) => ThirStmtKind::Expr(self.lower_expr(expr)?),
             HirStmtKind::Semi(expr) => ThirStmtKind::Semi(self.lower_expr(expr)?),
@@ -205,7 +203,20 @@ impl<'hir> ThirLowerCtx<'hir> {
         let ty = self.expr_ty(expr, &span)?;
         let kind = match expr_data.kind {
             HirExprKind::Int(value) => ThirExprKind::Int(value),
+            HirExprKind::Bool(value) => ThirExprKind::Bool(value),
             HirExprKind::String(value) => ThirExprKind::String(value),
+            HirExprKind::StructLit { def_id, fields } => {
+                let fields = fields
+                    .into_iter()
+                    .map(|field| {
+                        let index = self.struct_field_index(def_id, &field.name, &field.span)?;
+                        let expr = self.lower_expr(field.expr)?;
+                        Ok((index, expr))
+                    })
+                    .collect::<ThirLowerResult<Vec<_>>>()?;
+
+                ThirExprKind::StructLit { def_id, fields }
+            }
             HirExprKind::Path(Res::Local(_)) => {
                 let place = self.lower_place(expr)?;
                 ThirExprKind::Use(place)
@@ -350,6 +361,15 @@ impl<'hir> ThirLowerCtx<'hir> {
                 }
                 Err(error) => return Err(error),
             },
+            HirExprKind::NamedField { base, .. } => match self.lower_place(expr) {
+                Ok(place) => ThirExprKind::Use(place),
+                Err(error) if error.is_invalid_place() => {
+                    let index = self.field_index(expr, &span)?;
+                    let base = self.lower_expr(base)?;
+                    ThirExprKind::FieldValue { base, index }
+                }
+                Err(error) => return Err(error),
+            },
             HirExprKind::Array(elems) => {
                 let elems = elems
                     .into_iter()
@@ -372,6 +392,43 @@ impl<'hir> ThirLowerCtx<'hir> {
         };
 
         self.alloc_expr(ThirExpr::new(kind, ty, span, Some(expr)))
+    }
+
+    fn lower_pat(&mut self, pat: &HirPat) -> ThirLowerResult<ThirPat> {
+        let kind = match &pat.kind {
+            HirPatKind::Wildcard => ThirPatKind::Wildcard,
+            HirPatKind::Binding {
+                local_id,
+                name,
+                mutable,
+            } => {
+                let local =
+                    self.declare_local(*local_id, name.clone(), *mutable, pat.span.clone())?;
+                ThirPatKind::Binding(local)
+            }
+            HirPatKind::Tuple(elems) => {
+                let elems = elems
+                    .iter()
+                    .map(|elem| self.lower_pat(elem))
+                    .collect::<ThirLowerResult<Vec<_>>>()?;
+                ThirPatKind::Tuple(elems)
+            }
+            HirPatKind::Struct { def_id, fields } => {
+                let fields = fields
+                    .iter()
+                    .map(|field| Ok((field.index, self.lower_pat(&field.pat)?)))
+                    .collect::<ThirLowerResult<Vec<_>>>()?;
+                ThirPatKind::Struct {
+                    def_id: *def_id,
+                    fields,
+                }
+            }
+        };
+
+        Ok(ThirPat {
+            kind,
+            span: pat.span.clone(),
+        })
     }
 
     fn lower_place(&mut self, expr: HirExprId) -> ThirLowerResult<ThirPlace> {
@@ -413,6 +470,14 @@ impl<'hir> ThirLowerCtx<'hir> {
                 }
             }
             HirExprKind::Field { base, index } => {
+                let base = self.lower_place(base)?;
+                ThirPlaceKind::Field {
+                    base: Box::new(base),
+                    index,
+                }
+            }
+            HirExprKind::NamedField { base, .. } => {
+                let index = self.field_index(expr, &span)?;
                 let base = self.lower_place(base)?;
                 ThirPlaceKind::Field {
                     base: Box::new(base),
@@ -529,6 +594,35 @@ impl<'hir> ThirLowerCtx<'hir> {
         }
 
         default_ty
+    }
+
+    fn field_index(&self, expr: HirExprId, span: &Span) -> ThirLowerResult<usize> {
+        self.typeck.get_field_index(expr).copied().ok_or_else(|| {
+            self.error(
+                ThirLowerErrorKind::Internal {
+                    message: format!("missing resolved field index for {expr:?}"),
+                },
+                span.clone(),
+            )
+        })
+    }
+
+    fn struct_field_index(&self, def_id: DefId, name: &str, span: &Span) -> ThirLowerResult<usize> {
+        self.defs
+            .get(def_id)
+            .and_then(|def| {
+                def.struct_fields
+                    .iter()
+                    .position(|field| field.name == name)
+            })
+            .ok_or_else(|| {
+                self.error(
+                    ThirLowerErrorKind::Internal {
+                        message: format!("missing struct field `{name}` on {def_id:?}"),
+                    },
+                    span.clone(),
+                )
+            })
     }
 
     fn body_mut(&mut self) -> ThirLowerResult<&mut ThirBody> {

@@ -1,0 +1,47 @@
+extern fn printf(fmt:str, ...) -> i32;
+extern fn scanf(fmt:str, ...) -> i32;
+
+fn total_moves(n:i32) -> i32 {
+    let mut total:i32 = 0;
+    let mut i:i32 = 0;
+
+    while i < n {
+        total = total * 2 + 1;
+        i = i + 1;
+    }
+
+    return total;
+}
+
+fn solve_hanoi(n:i32, from:str, aux:str, to:str) {
+    //printf("enter: n=%d, from=%s, aux=%s, to=%s\n", n, from, aux, to);
+
+    if n == 0 {
+        //printf("base : nothing to move\n");
+        return;
+    }
+
+    solve_hanoi(n - 1, from, to, aux);
+    printf("move : disk %d, %s -> %s\n", n, from, to);
+    solve_hanoi(n - 1, aux, from, to);
+
+    //printf("leave: n=%d, from=%s, aux=%s, to=%s\n", n, from, aux, to);
+}
+
+fn main() -> i32 {
+    let mut n:i32 = 3;
+
+    printf("Enter height:\n");
+    scanf("%d", &mut n);
+    let moves:i32 = total_moves(n);
+
+    printf("Tower of Hanoi\n");
+    printf("disks: %d\n", n);
+    printf("total moves: %d\n", moves);
+    printf("begin\n");
+
+    solve_hanoi(n, "A", "B", "C");
+
+    printf("done\n");
+    return 0;
+}

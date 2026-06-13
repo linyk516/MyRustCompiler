@@ -16,7 +16,9 @@ use crate::{
 pub enum IrTy {
     I1,
     I8,
+    I16,
     I32,
+    I64,
     Void,
     Ptr,
     Array { elem: Box<IrTy>, len: usize },

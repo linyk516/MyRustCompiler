@@ -13,6 +13,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod ast;
+pub mod borrowck;
 pub mod compiler;
 pub mod hir;
 pub mod ir;

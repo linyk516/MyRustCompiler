@@ -118,6 +118,180 @@ fn compiler_compile_returns_output_with_tokens_and_cst() {
 }
 
 #[test]
+fn compiler_accepts_bool_condition() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new(
+        r#"
+fn main() -> i32 {
+    let ok: bool = true;
+    if ok {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+"#,
+    );
+
+    let outcome = compiler.compile(source);
+
+    assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+    assert!(
+        outcome
+            .output
+            .as_ref()
+            .and_then(|output| output.ir())
+            .is_some()
+    );
+}
+
+#[test]
+fn compiler_rejects_non_bool_condition() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() { if 1 {} }");
+
+    let outcome = compiler.compile(source);
+
+    assert!(
+        outcome.diagnostics.iter().any(|diagnostic| {
+            matches!(diagnostic.details, DiagnosticDetails::Typecheck { .. })
+        })
+    );
+    assert!(
+        outcome
+            .output
+            .as_ref()
+            .and_then(|output| output.ir())
+            .is_none()
+    );
+}
+
+#[test]
+fn compiler_accepts_sized_integer_annotations() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new(
+        r#"
+fn main() -> i32 {
+    let a: i64 = 1;
+    let b: u8 = 2;
+    let c: isize = 3;
+    return 0;
+}
+"#,
+    );
+
+    let outcome = compiler.compile(source);
+
+    assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+    assert!(
+        outcome
+            .output
+            .as_ref()
+            .and_then(|output| output.ir())
+            .is_some()
+    );
+}
+
+#[test]
+fn compiler_rejects_bool_as_integer_initializer() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new("fn main() { let x: i8 = true; }");
+
+    let outcome = compiler.compile(source);
+
+    assert!(
+        outcome.diagnostics.iter().any(|diagnostic| {
+            matches!(diagnostic.details, DiagnosticDetails::Typecheck { .. })
+        })
+    );
+}
+
+#[test]
+fn compiler_accepts_named_struct_literal_and_field_access() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new(
+        r#"
+struct Point { x: i32, y: bool }
+
+fn main() -> i32 {
+    let p: Point = Point { x: 1, y: true };
+    return p.x;
+}
+"#,
+    );
+
+    let outcome = compiler.compile(source);
+
+    assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+    assert!(
+        outcome
+            .output
+            .as_ref()
+            .and_then(|output| output.ir())
+            .is_some()
+    );
+}
+
+#[test]
+fn compiler_reports_unknown_struct_field() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new(
+        r#"
+struct Point { x: i32 }
+
+fn main() -> i32 {
+    let p: Point = Point { x: 1 };
+    return p.y;
+}
+"#,
+    );
+
+    let outcome = compiler.compile(source);
+
+    assert!(
+        outcome.diagnostics.iter().any(|diagnostic| {
+            matches!(diagnostic.details, DiagnosticDetails::Typecheck { .. })
+        })
+    );
+    assert!(
+        outcome
+            .output
+            .as_ref()
+            .and_then(|output| output.ir())
+            .is_none()
+    );
+}
+
+#[test]
+fn compiler_accepts_tuple_and_struct_let_patterns() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new(
+        r#"
+struct point { x: i32, y: i32 }
+
+fn main() -> i32 {
+    let pair = (1, 2);
+    let (a, b) = pair;
+    let p = point { x: a, y: b };
+    let point { x, y } = p;
+    return x + y;
+}
+"#,
+    );
+
+    let outcome = compiler.compile(source);
+
+    assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+    assert!(
+        outcome
+            .output
+            .as_ref()
+            .and_then(|output| output.ir())
+            .is_some()
+    );
+}
+
+#[test]
 fn compiler_compile_returns_error_for_unknown_char_in_function_body() {
     let compiler = Compiler::build(false).expect("compiler should build");
     let source = SourceFile::new("fn main() {@}");
@@ -422,6 +596,120 @@ fn cli_renderer_prints_extern_printf_ir_when_enabled() {
     assert!(rendered.stdout.contains("declare i32 @printf(ptr, ...)"));
     assert!(rendered.stdout.contains("call i32 (ptr, ...) @printf"));
     assert!(rendered.stdout.contains("@.str.0"));
+}
+
+#[test]
+fn compiler_accepts_scanf_with_mut_ref_variadic_arg() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new(
+        r#"
+        extern fn scanf(fmt:str, ...) -> i32;
+
+        fn main() -> i32 {
+            let mut n:i32 = 0;
+            scanf("%d", &mut n);
+            return n;
+        }
+        "#,
+    );
+    let outcome = compiler.compile(source);
+    let renderer = CliRenderer::new(RenderConfig::new(false).with_show_ir(true));
+
+    let rendered = renderer.render_outcome(&compiler, &outcome);
+
+    assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+    assert!(rendered.stdout.contains("declare i32 @scanf(ptr, ...)"));
+    assert!(rendered.stdout.contains("call i32 (ptr, ...) @scanf"));
+    assert!(rendered.stdout.contains("ptr %local0.addr"));
+}
+
+#[test]
+fn compiler_rejects_mut_borrow_while_shared_borrow_is_active() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new(
+        r#"
+        fn main() {
+            let mut x:i32 = 1;
+            let r = &x;
+            let m = &mut x;
+        }
+        "#,
+    );
+
+    let outcome = compiler.compile(source);
+
+    assert!(outcome.has_errors(), "{:?}", outcome.diagnostics);
+    assert!(
+        outcome
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("borrow"))
+    );
+    assert!(
+        outcome
+            .output
+            .as_ref()
+            .and_then(|output| output.thir())
+            .is_none()
+    );
+}
+
+#[test]
+fn compiler_rejects_assignment_while_local_is_borrowed() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new(
+        r#"
+        fn main() {
+            let mut x:i32 = 1;
+            let r = &x;
+            x = 2;
+        }
+        "#,
+    );
+
+    let outcome = compiler.compile(source);
+
+    assert!(outcome.has_errors(), "{:?}", outcome.diagnostics);
+    assert!(
+        outcome
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("borrow"))
+    );
+    assert!(
+        outcome
+            .output
+            .as_ref()
+            .and_then(|output| output.thir())
+            .is_none()
+    );
+}
+
+#[test]
+fn compiler_allows_assignment_after_inner_borrow_scope_ends() {
+    let compiler = Compiler::build(false).expect("compiler should build");
+    let source = SourceFile::new(
+        r#"
+        fn main() {
+            let mut x:i32 = 1;
+            if true {
+                let r = &x;
+            }
+            x = 2;
+        }
+        "#,
+    );
+
+    let outcome = compiler.compile(source);
+
+    assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+    assert!(
+        outcome
+            .output
+            .as_ref()
+            .and_then(|output| output.thir())
+            .is_some()
+    );
 }
 
 #[test]

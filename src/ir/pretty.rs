@@ -354,7 +354,9 @@ impl<'a> IrDumper<'a> {
         match ty {
             IrTy::I1 => "i1".to_string(),
             IrTy::I8 => "i8".to_string(),
+            IrTy::I16 => "i16".to_string(),
             IrTy::I32 => "i32".to_string(),
+            IrTy::I64 => "i64".to_string(),
             IrTy::Void => "void".to_string(),
             IrTy::Ptr => "ptr".to_string(),
             IrTy::Array { elem, len } => format!("[{} x {}]", len, self.ty_text(elem)),

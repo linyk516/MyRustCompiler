@@ -165,9 +165,9 @@ fn thir_lowering_preserves_control_expressions() {
             for i:i32 in 0..3 {
                 x = x + i;
             }
-            let y:i32 = if x { 1 } else { 2 };
+            let y:i32 = if x > 0 { 1 } else { 2 };
             let z:i32 = loop {
-                if y {
+                if y > 0 {
                     break y;
                 } else {
                     break y + 1;

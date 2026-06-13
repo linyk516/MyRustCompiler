@@ -120,12 +120,29 @@ pub struct ThirStmt {
 #[derive(Debug, Clone)]
 pub enum ThirStmtKind {
     Let {
-        local: ThirLocalId,
+        pat: ThirPat,
         init: Option<ThirExprId>,
     },
     Expr(ThirExprId),
     Semi(ThirExprId),
     Empty,
+}
+
+#[derive(Debug, Clone)]
+pub struct ThirPat {
+    pub kind: ThirPatKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum ThirPatKind {
+    Wildcard,
+    Binding(ThirLocalId),
+    Tuple(Vec<ThirPat>),
+    Struct {
+        def_id: DefId,
+        fields: Vec<(usize, ThirPat)>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -150,7 +167,12 @@ impl ThirExpr {
 #[derive(Debug, Clone)]
 pub enum ThirExprKind {
     Int(i32),
+    Bool(bool),
     String(String),
+    StructLit {
+        def_id: DefId,
+        fields: Vec<(usize, ThirExprId)>,
+    },
     Use(ThirPlace),
     Binary {
         op: BinaryOp,

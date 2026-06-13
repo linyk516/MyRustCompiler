@@ -3,7 +3,10 @@ use std::fmt::{Display, Write};
 use crate::{
     thir::{
         id::{ThirBodyId, ThirExprId, ThirLocalId, ThirStmtId},
-        node::{ThirBlock, ThirExprKind, ThirPlace, ThirPlaceKind, ThirProgram, ThirStmtKind},
+        node::{
+            ThirBlock, ThirExprKind, ThirPat, ThirPatKind, ThirPlace, ThirPlaceKind, ThirProgram,
+            ThirStmtKind,
+        },
     },
     typecheck::ty::{TyId, TyKind, TyStore},
 };
@@ -138,8 +141,9 @@ impl<'a> ThirDumper<'a> {
 
         self.line(indent, format!("{id:?}: {}", self.ty_text(stmt.ty)));
         match &stmt.kind {
-            ThirStmtKind::Let { local, init } => {
-                self.line(indent + 1, format!("Let {local:?}"));
+            ThirStmtKind::Let { pat, init } => {
+                self.line(indent + 1, "Let");
+                self.pat(pat, indent + 2);
                 if let Some(init) = init {
                     self.line(indent + 2, format!("Init {init:?}"));
                 }
@@ -164,11 +168,38 @@ impl<'a> ThirDumper<'a> {
         self.expr_kind(&expr.kind, indent + 1);
     }
 
+    fn pat(&mut self, pat: &ThirPat, indent: usize) {
+        match &pat.kind {
+            ThirPatKind::Wildcard => self.line(indent, "Wildcard"),
+            ThirPatKind::Binding(local) => self.line(indent, format!("Binding {local:?}")),
+            ThirPatKind::Tuple(elems) => {
+                self.line(indent, "TuplePat");
+                for elem in elems {
+                    self.pat(elem, indent + 1);
+                }
+            }
+            ThirPatKind::Struct { def_id, fields } => {
+                self.line(indent, format!("StructPat {def_id:?}"));
+                for (index, pat) in fields {
+                    self.line(indent + 1, format!("Field {index}"));
+                    self.pat(pat, indent + 2);
+                }
+            }
+        }
+    }
+
     fn expr_kind(&mut self, kind: &ThirExprKind, indent: usize) {
         match kind {
             ThirExprKind::Int(value) => self.line(indent, format!("Int {value}")),
+            ThirExprKind::Bool(value) => self.line(indent, format!("Bool {value}")),
             ThirExprKind::String(value) => {
                 self.line(indent, format!("String \"{}\"", escape_string(value)))
+            }
+            ThirExprKind::StructLit { def_id, fields } => {
+                self.line(indent, format!("StructLit {def_id:?}"));
+                for (index, expr) in fields {
+                    self.line(indent + 1, format!("Field {index} {expr:?}"));
+                }
             }
             ThirExprKind::Use(place) => {
                 self.line(indent, "Use");
@@ -300,8 +331,10 @@ impl<'a> ThirDumper<'a> {
 
     fn ty_text(&self, ty: TyId) -> String {
         match self.tys.kind(ty) {
-            TyKind::Int => "i32".to_string(),
+            TyKind::Int(kind) => kind.name().to_string(),
+            TyKind::Bool => "bool".to_string(),
             TyKind::Str => "str".to_string(),
+            TyKind::Adt(def_id) => format!("adt {:?}", def_id),
             TyKind::Unit => "()".to_string(),
             TyKind::Never => "!".to_string(),
             TyKind::Tuple(elems) => {

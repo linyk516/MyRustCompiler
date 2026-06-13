@@ -2,11 +2,15 @@ use std::collections::HashMap;
 
 use crate::{
     hir::id::{DefId, LocalId},
+    hir::ty::HirTy,
     lexer::token::Span,
 };
 
 #[derive(Debug, Clone)]
-/// 定义表，维护收集到的顶层定义（目前是函数），通过ident->id的索引来查找定义
+/// 定义表，维护收集到的顶层定义，通过 `ident -> DefId` 的索引来查找定义。
+///
+/// 函数和外部函数只需要名字与种类；结构体还会在 HIR lowering 后补充字段列表，
+/// 供 typecheck 按字段名检查 struct literal 和字段访问。
 pub struct DefTable {
     pub defs: Vec<DefData>,
     pub names: HashMap<String, DefId>,
@@ -17,12 +21,21 @@ pub struct DefData {
     pub name: String,
     pub kind: DefKind,
     pub span: Span,
+    pub struct_fields: Vec<StructFieldData>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DefKind {
     Fn,
     ExternFn,
+    Struct,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructFieldData {
+    pub name: String,
+    pub ty: HirTy,
+    pub span: Span,
 }
 
 impl DefTable {
@@ -38,11 +51,18 @@ impl DefTable {
             name: name.clone(),
             kind,
             span,
+            struct_fields: vec![],
         };
         let id: DefId = self.defs.len().into();
         self.names.insert(name, id);
         self.defs.push(data);
         id
+    }
+
+    pub fn set_struct_fields(&mut self, id: DefId, fields: Vec<StructFieldData>) {
+        if let Some(data) = self.defs.get_mut(id.index()) {
+            data.struct_fields = fields;
+        }
     }
 
     pub fn get(&self, id: DefId) -> Option<&DefData> {

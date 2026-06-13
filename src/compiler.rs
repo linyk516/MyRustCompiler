@@ -1,5 +1,6 @@
 use crate::ast::lower::Lowerer;
 use crate::ast::ty::Program;
+use crate::borrowck::check::BorrowCheckCtx;
 use crate::compiler::diagnostic::{Diagnostic, Severity};
 use crate::compiler::output::CompileOutcome;
 use crate::compiler::source::SourceFile;
@@ -119,37 +120,46 @@ impl Compiler {
                 .iter()
                 .any(|diagnostic| diagnostic.severity == Severity::Error);
             if result.errors.is_empty() && !has_prior_errors {
-                let thir_result = ThirLowerCtx::new(
-                    &hir.hir,
-                    &hir.defs,
-                    &hir.locals,
-                    &result.results,
-                    &result.tys,
-                )
-                .lower();
+                let borrowck_result = BorrowCheckCtx::new(&hir.hir, &hir.locals).check_program();
                 diagnostics.extend(
-                    thir_result
+                    borrowck_result
                         .errors
                         .iter()
-                        .map(|error| Diagnostic::from_thir_lower_error(error, &source)),
+                        .map(|error| Diagnostic::from_borrow_error(error, &source)),
                 );
-                if thir_result.errors.is_empty() {
-                    let ir_result = IrLowerCtx::new(
-                        &thir_result.program,
+                if borrowck_result.errors.is_empty() {
+                    let thir_result = ThirLowerCtx::new(
+                        &hir.hir,
                         &hir.defs,
+                        &hir.locals,
                         &result.results,
                         &result.tys,
                     )
                     .lower();
                     diagnostics.extend(
-                        ir_result
+                        thir_result
                             .errors
                             .iter()
-                            .map(|error| Diagnostic::from_ir_lower_error(error, &source)),
+                            .map(|error| Diagnostic::from_thir_lower_error(error, &source)),
                     );
-                    ir_output = Some(ir_result);
+                    if thir_result.errors.is_empty() {
+                        let ir_result = IrLowerCtx::new(
+                            &thir_result.program,
+                            &hir.defs,
+                            &result.results,
+                            &result.tys,
+                        )
+                        .lower();
+                        diagnostics.extend(
+                            ir_result
+                                .errors
+                                .iter()
+                                .map(|error| Diagnostic::from_ir_lower_error(error, &source)),
+                        );
+                        ir_output = Some(ir_result);
+                    }
+                    thir_output = Some(thir_result);
                 }
-                thir_output = Some(thir_result);
             }
             typeck_output = Some(result);
         }

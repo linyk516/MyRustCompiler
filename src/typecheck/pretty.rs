@@ -144,8 +144,10 @@ impl<'a> TypeckDumper<'a> {
 
     fn ty_text(&self, ty: TyId) -> String {
         match self.tys.kind(ty) {
-            TyKind::Int => "i32".to_string(),
+            TyKind::Int(kind) => kind.name().to_string(),
+            TyKind::Bool => "bool".to_string(),
             TyKind::Str => "str".to_string(),
+            TyKind::Adt(def_id) => format!("adt {:?}", def_id),
             TyKind::Unit => "()".to_string(),
             TyKind::Never => "!".to_string(),
             TyKind::Tuple(elems) => {

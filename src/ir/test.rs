@@ -225,9 +225,9 @@ fn ir_lowering_generates_blocks_for_control_flow() {
             for i:i32 in 0..3 {
                 x = x + i;
             }
-            let y:i32 = if x { 1 } else { 2 };
+            let y:i32 = if x > 0 { 1 } else { 2 };
             let z:i32 = loop {
-                if y {
+                if y > 0 {
                     break y;
                 } else {
                     break y + 1;

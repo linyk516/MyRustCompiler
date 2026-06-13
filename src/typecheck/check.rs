@@ -1,10 +1,15 @@
+use std::collections::HashSet;
+
 use crate::{
     ast::ty::BinaryOp,
     hir::{
         id::{DefId, HirBodyId, HirExprId, HirItemId, LocalId},
-        node::{HirBlock, HirExprKind, HirFnSig, HirItemKind, HirProgram, HirStmtKind},
+        node::{
+            HirBlock, HirExprKind, HirFnSig, HirItemKind, HirPat, HirPatKind, HirProgram,
+            HirStmtKind, HirStructLitField,
+        },
         res::Res,
-        table::{DefTable, LocalTable},
+        table::{DefKind, DefTable, LocalTable},
         ty::{HirTy, HirTyKind},
     },
     lexer::token::Span,
@@ -103,6 +108,19 @@ impl<'hir> TypeckCtx<'hir> {
                 let fn_ty = self.collect_fn_ty(&hir_fn.sig);
                 self.results.set_def_ty(item.def_id, fn_ty);
             }
+            HirItemKind::Struct(_) => {
+                let fields = self
+                    .defs
+                    .get(item.def_id)
+                    .map(|def| def.struct_fields.clone())
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|field| self.lower_hir_ty(&field.ty))
+                    .collect();
+                self.results.set_struct_field_tys(item.def_id, fields);
+                let struct_ty = self.tys.intern(TyKind::Adt(item.def_id));
+                self.results.set_def_ty(item.def_id, struct_ty);
+            }
         }
     }
 
@@ -131,8 +149,10 @@ impl<'hir> TypeckCtx<'hir> {
     /// 统一使用的类型表示。这里不做推导，只做结构转换。
     fn lower_hir_ty(&mut self, ty: &HirTy) -> TyId {
         let ty_kind = match &ty.kind {
-            HirTyKind::I32 => TyKind::Int,
+            HirTyKind::Int(kind) => TyKind::Int(*kind),
+            HirTyKind::Bool => TyKind::Bool,
             HirTyKind::Str => TyKind::Str,
+            HirTyKind::Adt(def_id) => TyKind::Adt(*def_id),
             HirTyKind::Ref { mutable, inner } => TyKind::Ref {
                 mutable: *mutable,
                 inner: self.lower_hir_ty(inner),
@@ -163,6 +183,7 @@ impl<'hir> TypeckCtx<'hir> {
         match item.kind {
             HirItemKind::Fn(fn_item) => self.check_fn(item.def_id, fn_item.body, &fn_item.sig),
             HirItemKind::ExternFn(_) => {}
+            HirItemKind::Struct(_) => {}
         }
     }
 
@@ -249,9 +270,9 @@ impl<'hir> TypeckCtx<'hir> {
         };
 
         let ty = match stmt_data.kind {
-            HirStmtKind::Let {
-                local_id, ty, init, ..
-            } => self.check_let_stmt(local_id, ty.as_ref(), init, stmt_data.span),
+            HirStmtKind::Let { pat, ty, init, .. } => {
+                self.check_let_stmt(&pat, ty.as_ref(), init, stmt_data.span)
+            }
             HirStmtKind::Expr(expr) => self.check_expr(expr, None),
             HirStmtKind::Semi(expr) => {
                 let expected_unit = self.tys.unit();
@@ -275,7 +296,7 @@ impl<'hir> TypeckCtx<'hir> {
     /// 存在初始化表达式时，会把变量类型和初始化表达式类型统一。
     fn check_let_stmt(
         &mut self,
-        local_id: LocalId,
+        pat: &HirPat,
         explicit_ty: Option<&HirTy>,
         init: Option<HirExprId>,
         span: Span,
@@ -292,8 +313,79 @@ impl<'hir> TypeckCtx<'hir> {
             None => declared_ty,
         };
 
-        self.results.set_local_ty(local_id, final_ty);
+        self.check_pat(pat, final_ty);
         self.tys.unit()
+    }
+
+    /// 用一个已知类型检查 pattern，并为其中所有绑定写入局部变量类型。
+    ///
+    /// 例如 `let (a, b) = pair` 会先确定 `pair` 是一个二元组，然后把第 0 个字段类型
+    /// 写给 `a`，第 1 个字段类型写给 `b`。
+    fn check_pat(&mut self, pat: &HirPat, expected: TyId) {
+        let expected = self.infer.resolve_ty(&self.tys, expected);
+        match &pat.kind {
+            HirPatKind::Wildcard => {}
+            HirPatKind::Binding { local_id, .. } => {
+                self.results.set_local_ty(*local_id, expected);
+            }
+            HirPatKind::Tuple(elems) => match self.tys.kind(expected).clone() {
+                TyKind::Tuple(field_tys) if field_tys.len() == elems.len() => {
+                    for (elem, field_ty) in elems.iter().zip(field_tys) {
+                        self.check_pat(elem, field_ty);
+                    }
+                }
+                TyKind::Error => {}
+                _ => {
+                    let expected_tuple = self.tuple_pat_expected_ty(elems.len());
+                    self.emit_error(
+                        TypeErrorKind::MismatchedTypes {
+                            expected: expected_tuple,
+                            actual: expected,
+                        },
+                        pat.span.clone(),
+                    );
+                }
+            },
+            HirPatKind::Struct { def_id, fields } => match self.tys.kind(expected).clone() {
+                TyKind::Adt(actual_def) if actual_def == *def_id => {
+                    for field in fields {
+                        match self
+                            .results
+                            .get_struct_field_tys(*def_id)
+                            .and_then(|field_tys| field_tys.get(field.index))
+                            .copied()
+                        {
+                            Some(field_ty) => self.check_pat(&field.pat, field_ty),
+                            None => self.emit_error(
+                                TypeErrorKind::UnknownField {
+                                    base: expected,
+                                    field: field.name.clone(),
+                                },
+                                field.span.clone(),
+                            ),
+                        }
+                    }
+                }
+                TyKind::Error => {}
+                _ => {
+                    let expected_struct = self.tys.intern(TyKind::Adt(*def_id));
+                    self.emit_error(
+                        TypeErrorKind::MismatchedTypes {
+                            expected: expected_struct,
+                            actual: expected,
+                        },
+                        pat.span.clone(),
+                    );
+                }
+            },
+        }
+    }
+
+    fn tuple_pat_expected_ty(&mut self, len: usize) -> TyId {
+        let elems = (0..len)
+            .map(|_| self.infer.new_ty_var(&mut self.tys))
+            .collect();
+        self.tys.intern(TyKind::Tuple(elems))
     }
 
     /// 检查表达式，并返回表达式类型。
@@ -309,9 +401,13 @@ impl<'hir> TypeckCtx<'hir> {
 
         let span = expr_data.span.clone();
         let ty = match expr_data.kind {
-            HirExprKind::Int(_) => self.tys.int(),
+            HirExprKind::Int(_) => self.integer_literal_ty(expected),
+            HirExprKind::Bool(_) => self.tys.bool(),
             HirExprKind::String(_) => self.tys.str(),
             HirExprKind::Path(res) => self.check_res(res, span.clone()),
+            HirExprKind::StructLit { def_id, fields } => {
+                self.check_struct_lit_expr(def_id, &fields, span)
+            }
             HirExprKind::Binary { op, lhs, rhs } => self.check_binary_expr(op, lhs, rhs, span),
             HirExprKind::Call { callee, args } => self.check_call_expr(callee, &args, span),
             HirExprKind::Assign { lhs, rhs } => self.check_assign_expr(lhs, rhs, span),
@@ -335,9 +431,10 @@ impl<'hir> TypeckCtx<'hir> {
             HirExprKind::Break(value) => self.check_break_expr(value, span),
             HirExprKind::Continue => self.check_continue_expr(span),
             HirExprKind::Borrow { mutable, expr } => self.check_borrow_expr(mutable, expr, span),
-            HirExprKind::Deref(_) | HirExprKind::Index { .. } | HirExprKind::Field { .. } => {
-                self.check_place_expr(expr)
-            }
+            HirExprKind::Deref(_)
+            | HirExprKind::Index { .. }
+            | HirExprKind::Field { .. }
+            | HirExprKind::NamedField { .. } => self.check_place_expr(expr),
             HirExprKind::Array(elems) => self.check_array_expr(&elems, span),
             HirExprKind::Tuple(elems) => self.check_tuple_expr(&elems),
             HirExprKind::Range { start, end } => self.check_range_expr(start, end, span),
@@ -389,24 +486,34 @@ impl<'hir> TypeckCtx<'hir> {
         rhs: HirExprId,
         span: Span,
     ) -> TyId {
-        let int_ty = self.tys.int();
-        let lhs_ty = self.check_expr(lhs, Some(int_ty));
-        let rhs_ty = self.check_expr(rhs, Some(int_ty));
-
-        self.unify_at(int_ty, lhs_ty, span.clone());
-        self.unify_at(int_ty, rhs_ty, span);
-
         match op {
-            BinaryOp::Add
-            | BinaryOp::Sub
-            | BinaryOp::Mul
-            | BinaryOp::Div
-            | BinaryOp::Eq
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                let lhs_ty = self.check_expr(lhs, None);
+                let rhs_ty = self.check_expr(rhs, Some(lhs_ty));
+                let ty = self.unify_at(lhs_ty, rhs_ty, span.clone());
+                if !self.is_int_ty(ty) {
+                    let int_ty = self.tys.int();
+                    self.unify_at(int_ty, ty, span);
+                    self.tys.error()
+                } else {
+                    ty
+                }
+            }
+            BinaryOp::Eq
             | BinaryOp::Ne
             | BinaryOp::Lt
             | BinaryOp::Le
             | BinaryOp::Gt
-            | BinaryOp::Ge => int_ty,
+            | BinaryOp::Ge => {
+                let lhs_ty = self.check_expr(lhs, None);
+                let rhs_ty = self.check_expr(rhs, Some(lhs_ty));
+                let ty = self.unify_at(lhs_ty, rhs_ty, span.clone());
+                if !self.is_int_ty(ty) {
+                    let int_ty = self.tys.int();
+                    self.unify_at(int_ty, ty, span);
+                }
+                self.tys.bool()
+            }
         }
     }
 
@@ -500,9 +607,9 @@ impl<'hir> TypeckCtx<'hir> {
         expected: Option<TyId>,
         span: Span,
     ) -> TyId {
-        let int_ty = self.tys.int();
-        let cond_ty = self.check_expr(cond, Some(int_ty));
-        self.unify_at(int_ty, cond_ty, self.expr_span(cond));
+        let bool_ty = self.tys.bool();
+        let cond_ty = self.check_expr(cond, Some(bool_ty));
+        self.unify_at(bool_ty, cond_ty, self.expr_span(cond));
 
         let then_ty = self.check_block(then_block, expected);
         match else_expr {
@@ -546,9 +653,9 @@ impl<'hir> TypeckCtx<'hir> {
     /// while 条件当前要求为 `i32`，循环体按 unit 上下文检查。while 作为表达式时
     /// 结果类型为 `Unit`。
     fn check_while_expr(&mut self, cond: HirExprId, body: &HirBlock) -> TyId {
-        let int_ty = self.tys.int();
-        let cond_ty = self.check_expr(cond, Some(int_ty));
-        self.unify_at(int_ty, cond_ty, self.expr_span(cond));
+        let bool_ty = self.tys.bool();
+        let cond_ty = self.check_expr(cond, Some(bool_ty));
+        self.unify_at(bool_ty, cond_ty, self.expr_span(cond));
 
         let unit_ty = self.tys.unit();
         self.loop_break_tys.push(unit_ty);
@@ -715,6 +822,81 @@ impl<'hir> TypeckCtx<'hir> {
         self.tys.intern(TyKind::Tuple(elems))
     }
 
+    /// 检查 named-field struct literal。
+    ///
+    /// 字段表来自 HIR `DefTable`，因此这里不再做类型名解析，只校验字段集合和每个
+    /// 字段初始化表达式的类型。字段顺序不要求和声明一致，但不能重复，也不能遗漏。
+    fn check_struct_lit_expr(
+        &mut self,
+        def_id: DefId,
+        fields: &[HirStructLitField],
+        span: Span,
+    ) -> TyId {
+        let Some(def) = self.defs.get(def_id).cloned() else {
+            self.emit_internal_at("Struct definition not found!", span);
+            return self.tys.error();
+        };
+
+        if def.kind != DefKind::Struct {
+            let ty = self.tys.intern(TyKind::Adt(def_id));
+            self.emit_error(TypeErrorKind::NotStruct { ty }, span);
+            for field in fields {
+                self.check_expr(field.expr, None);
+            }
+            return self.tys.error();
+        }
+
+        let mut seen = HashSet::new();
+        for field in fields {
+            if !seen.insert(field.name.clone()) {
+                self.emit_error(
+                    TypeErrorKind::DuplicateStructField {
+                        field: field.name.clone(),
+                    },
+                    field.span.clone(),
+                );
+            }
+
+            match def
+                .struct_fields
+                .iter()
+                .position(|decl_field| decl_field.name == field.name)
+            {
+                Some(index) => {
+                    let decl_ty = def.struct_fields[index].ty.clone();
+                    let expected = self.lower_hir_ty(&decl_ty);
+                    let actual = self.check_expr(field.expr, Some(expected));
+                    self.unify_at(expected, actual, self.expr_span(field.expr));
+                }
+                None => {
+                    let base = self.tys.intern(TyKind::Adt(def_id));
+                    self.emit_error(
+                        TypeErrorKind::UnknownField {
+                            base,
+                            field: field.name.clone(),
+                        },
+                        field.span.clone(),
+                    );
+                    self.check_expr(field.expr, None);
+                }
+            }
+        }
+
+        for decl_field in &def.struct_fields {
+            if !seen.contains(&decl_field.name) {
+                self.emit_error(
+                    TypeErrorKind::MissingStructField {
+                        def_id,
+                        field: decl_field.name.clone(),
+                    },
+                    span.clone(),
+                );
+            }
+        }
+
+        self.tys.intern(TyKind::Adt(def_id))
+    }
+
     /// 检查范围表达式。
     ///
     /// 当前 HIR 的 `ForRange` 已经专门处理 for 循环，普通 range 表达式还没有独立的
@@ -819,6 +1001,33 @@ impl<'hir> TypeckCtx<'hir> {
                     }
                 }
             }
+            HirExprKind::NamedField { base, name } => {
+                let base_ty = self.check_expr(base, None);
+                let base_ty = self.infer.resolve_ty(&self.tys, base_ty);
+                match self.tys.kind(base_ty).clone() {
+                    TyKind::Adt(def_id) => match self.struct_field_index_and_ty(def_id, &name) {
+                        Some((index, ty)) => {
+                            self.results.set_field_index(expr, index);
+                            ty
+                        }
+                        None => {
+                            self.emit_error(
+                                TypeErrorKind::UnknownField {
+                                    base: base_ty,
+                                    field: name,
+                                },
+                                expr_data.span,
+                            );
+                            self.tys.error()
+                        }
+                    },
+                    TyKind::Error => self.tys.error(),
+                    _ => {
+                        self.emit_error(TypeErrorKind::NotStruct { ty: base_ty }, expr_data.span);
+                        self.tys.error()
+                    }
+                }
+            }
             _ => {
                 let ty = self.check_expr(expr, None);
                 self.emit_error(TypeErrorKind::NotAssignable { target: ty }, expr_data.span);
@@ -846,9 +1055,9 @@ impl<'hir> TypeckCtx<'hir> {
                 .map(|local| local.mutable)
                 .unwrap_or(false),
             HirExprKind::Deref(_) => true,
-            HirExprKind::Index { base, .. } | HirExprKind::Field { base, .. } => {
-                self.is_assignable(*base)
-            }
+            HirExprKind::Index { base, .. }
+            | HirExprKind::Field { base, .. }
+            | HirExprKind::NamedField { base, .. } => self.is_assignable(*base),
             _ => false,
         }
     }
@@ -868,11 +1077,24 @@ impl<'hir> TypeckCtx<'hir> {
                 .map(|local| local.mutable)
                 .unwrap_or(false),
             HirExprKind::Deref(_) => true,
-            HirExprKind::Index { base, .. } | HirExprKind::Field { base, .. } => {
-                self.can_mut_borrow(*base)
-            }
+            HirExprKind::Index { base, .. }
+            | HirExprKind::Field { base, .. }
+            | HirExprKind::NamedField { base, .. } => self.can_mut_borrow(*base),
             _ => true,
         }
+    }
+
+    /// 根据结构体定义查询字段序号和字段类型。
+    ///
+    /// 返回的 index 是声明顺序中的位置，后续 THIR 和 IR 会用它生成 GEP 字段访问。
+    fn struct_field_index_and_ty(&mut self, def_id: DefId, name: &str) -> Option<(usize, TyId)> {
+        let fields = self.defs.get(def_id)?.struct_fields.clone();
+        let (index, field) = fields
+            .into_iter()
+            .enumerate()
+            .find(|(_, field)| field.name == name)?;
+        let ty = self.lower_hir_ty(&field.ty);
+        Some((index, ty))
     }
 
     /// 统一两个类型；失败时报告普通类型不匹配，并返回 Error 类型。
@@ -985,16 +1207,26 @@ impl<'hir> TypeckCtx<'hir> {
                 params.iter().any(|&param| self.contains_infer_ty(param))
                     || self.contains_infer_ty(*ret)
             }
-            TyKind::Int | TyKind::Str | TyKind::Unit | TyKind::Never | TyKind::Error => false,
+            TyKind::Int(_)
+            | TyKind::Bool
+            | TyKind::Str
+            | TyKind::Adt(_)
+            | TyKind::Unit
+            | TyKind::Never
+            | TyKind::Error => false,
         }
     }
 
     /// 判断一个类型是否可以安全地作为 C varargs 实参传给外部函数。
     ///
-    /// v1 只允许 `i32` 和 `str`，分别映射到 LLVM 的 `i32` 和 `ptr`。
+    /// v1 允许整数、`str` 和引用类型。它们分别映射到 LLVM 整数或 `ptr`，
+    /// 足以覆盖 `printf("%d", x)` 与 `scanf("%d", &mut x)` 这类 C 接口。
     fn is_valid_variadic_arg_ty(&mut self, ty: TyId) -> bool {
         let ty = self.infer.resolve_ty(&self.tys, ty);
-        matches!(self.tys.kind(ty), TyKind::Int | TyKind::Str | TyKind::Error)
+        matches!(
+            self.tys.kind(ty),
+            TyKind::Int(_) | TyKind::Str | TyKind::Ref { .. } | TyKind::Error
+        )
     }
 
     /// 判断一个类型是否已经解析为 `Never`。
@@ -1004,6 +1236,29 @@ impl<'hir> TypeckCtx<'hir> {
     fn is_never_ty(&mut self, ty: TyId) -> bool {
         let ty = self.infer.resolve_ty(&self.tys, ty);
         matches!(self.tys.kind(ty), TyKind::Never)
+    }
+
+    /// 判断一个类型是否已经解析为整数类型。
+    ///
+    /// 整数类型包括所有有符号、无符号和指针宽度整数；推导变量在调用者需要时应先
+    /// 通过期望类型约束成具体整数。
+    fn is_int_ty(&mut self, ty: TyId) -> bool {
+        let ty = self.infer.resolve_ty(&self.tys, ty);
+        matches!(self.tys.kind(ty), TyKind::Int(_))
+    }
+
+    /// 为整数字面量选择类型。
+    ///
+    /// 如果上下文已经给出具体整数类型，例如 `let x: i64 = 1`，字面量采用该类型；
+    /// 如果没有上下文或上下文不是整数类型，则使用语言默认的 `i32`。
+    fn integer_literal_ty(&mut self, expected: Option<TyId>) -> TyId {
+        if let Some(expected) = expected {
+            let expected = self.infer.resolve_ty(&self.tys, expected);
+            if matches!(self.tys.kind(expected), TyKind::Int(_)) {
+                return expected;
+            }
+        }
+        self.tys.int()
     }
 
     /// 报告一个内部错误，位置使用空 span。

@@ -4,7 +4,7 @@ use crate::{
         id::{DefId, HirExprId, HirStmtId, LocalId},
         node::{
             HirBlock, HirBody, HirExpr, HirExprKind, HirFn, HirFnSig, HirItem, HirItemKind,
-            HirParam, HirProgram, HirStmt, HirStmtKind,
+            HirParam, HirPat, HirPatKind, HirProgram, HirStmt, HirStmtKind,
         },
         res::Res,
         table::{DefKind, DefTable, LocalKind, LocalTable},
@@ -16,7 +16,7 @@ use crate::{
         error::TypeErrorKind,
         infer::InferCtx,
         result::{TypeckOutput, TypeckResults},
-        ty::{TyId, TyKind, TyStore, TyVarId},
+        ty::{IntKind, TyId, TyKind, TyStore, TyVarId},
     },
 };
 
@@ -32,7 +32,7 @@ fn span() -> Span {
 }
 
 fn hir_i32() -> HirTy {
-    HirTy::new(HirTyKind::I32, span())
+    HirTy::new(HirTyKind::Int(IntKind::I32), span())
 }
 
 fn hir_unit() -> HirTy {
@@ -101,6 +101,10 @@ fn int_expr(hir: &mut HirProgram, value: i32) -> HirExprId {
     expr(hir, HirExprKind::Int(value))
 }
 
+fn bool_expr(hir: &mut HirProgram, value: bool) -> HirExprId {
+    expr(hir, HirExprKind::Bool(value))
+}
+
 fn local_expr(hir: &mut HirProgram, local_id: LocalId) -> HirExprId {
     expr(hir, HirExprKind::Path(Res::Local(local_id)))
 }
@@ -123,9 +127,14 @@ fn let_stmt(
 ) -> HirStmtId {
     hir.alloc_stmt(HirStmt::new(
         HirStmtKind::Let {
-            local_id,
-            name: name.to_string(),
-            mutable,
+            pat: HirPat {
+                span: span(),
+                kind: HirPatKind::Binding {
+                    local_id,
+                    name: name.to_string(),
+                    mutable,
+                },
+            },
             ty,
             init,
         },
@@ -229,11 +238,11 @@ fn typeck_ctx_collects_function_signature_and_param_type() {
     let def_ty = *output.results.get_def_ty(def_id).unwrap();
     let local_ty = *output.results.get_local_ty(local_id).unwrap();
 
-    assert_eq!(output.tys.kind(local_ty), &TyKind::Int);
+    assert_eq!(output.tys.kind(local_ty), &TyKind::Int(IntKind::I32));
     match output.tys.kind(def_ty) {
         TyKind::Fn { params, ret, .. } => {
             assert_eq!(params.len(), 1);
-            assert_eq!(output.tys.kind(params[0]), &TyKind::Int);
+            assert_eq!(output.tys.kind(params[0]), &TyKind::Int(IntKind::I32));
             assert_eq!(output.tys.kind(*ret), &TyKind::Unit);
         }
         kind => panic!("expected function type, got {kind:?}"),
@@ -283,7 +292,7 @@ fn typeck_ctx_lowers_composite_hir_types_in_function_signature() {
     match output.tys.kind(local_ty) {
         TyKind::Ref { mutable, inner } => {
             assert!(*mutable);
-            assert_eq!(output.tys.kind(*inner), &TyKind::Int);
+            assert_eq!(output.tys.kind(*inner), &TyKind::Int(IntKind::I32));
         }
         kind => panic!("expected mutable ref type, got {kind:?}"),
     }
@@ -292,11 +301,11 @@ fn typeck_ctx_lowers_composite_hir_types_in_function_signature() {
         TyKind::Fn { ret, .. } => match output.tys.kind(*ret) {
             TyKind::Tuple(elems) => {
                 assert_eq!(elems.len(), 2);
-                assert_eq!(output.tys.kind(elems[0]), &TyKind::Int);
+                assert_eq!(output.tys.kind(elems[0]), &TyKind::Int(IntKind::I32));
                 match output.tys.kind(elems[1]) {
                     TyKind::Array { elem, len } => {
                         assert_eq!(*len, 3);
-                        assert_eq!(output.tys.kind(*elem), &TyKind::Int);
+                        assert_eq!(output.tys.kind(*elem), &TyKind::Int(IntKind::I32));
                     }
                     kind => panic!("expected array type, got {kind:?}"),
                 }
@@ -331,7 +340,7 @@ fn typeck_ctx_checks_block_tail_expr_and_records_expr_type() {
         .results
         .get_expr_ty(binary)
         .expect("binary expression should have a type");
-    assert_eq!(output.tys.kind(ty), &TyKind::Int);
+    assert_eq!(output.tys.kind(ty), &TyKind::Int(IntKind::I32));
 }
 
 #[test]
@@ -362,8 +371,8 @@ fn typeck_ctx_infers_let_initializer_type() {
         .results
         .get_stmt_ty(stmt)
         .expect("let statement should have a type");
-    assert_eq!(output.tys.kind(local_ty), &TyKind::Int);
-    assert_eq!(output.tys.kind(init_ty), &TyKind::Int);
+    assert_eq!(output.tys.kind(local_ty), &TyKind::Int(IntKind::I32));
+    assert_eq!(output.tys.kind(init_ty), &TyKind::Int(IntKind::I32));
     assert_eq!(output.tys.kind(stmt_ty), &TyKind::Unit);
 }
 
@@ -433,7 +442,7 @@ fn typeck_ctx_checks_call_expression_and_records_return_type() {
         .results
         .get_expr_ty(call)
         .expect("call expression should have callee return type");
-    assert_eq!(output.tys.kind(call_ty), &TyKind::Int);
+    assert_eq!(output.tys.kind(call_ty), &TyKind::Int(IntKind::I32));
 }
 
 #[test]
@@ -465,7 +474,7 @@ fn typeck_ctx_reports_wrong_call_argument_count() {
 #[test]
 fn typeck_ctx_reports_if_branch_mismatch() {
     let (hir, defs, locals, _, _) = single_fn_hir_with_body(vec![], hir_i32(), |hir, _, _, _| {
-        let cond = int_expr(hir, 1);
+        let cond = bool_expr(hir, true);
         let then_tail = int_expr(hir, 1);
         let then_block = HirBlock {
             stmts: vec![],
@@ -494,7 +503,7 @@ fn typeck_ctx_reports_if_branch_mismatch() {
 #[test]
 fn typeck_ctx_reports_missing_else_when_if_is_used_as_value() {
     let (hir, defs, locals, _, _) = single_fn_hir_with_body(vec![], hir_i32(), |hir, _, _, _| {
-        let cond = int_expr(hir, 1);
+        let cond = bool_expr(hir, true);
         let then_tail = int_expr(hir, 1);
         let then_block = HirBlock {
             stmts: vec![],
@@ -523,7 +532,7 @@ fn typeck_ctx_reports_missing_else_when_if_is_used_as_value() {
 fn typeck_ctx_infers_loop_expr_type_from_break_values() {
     let mut loop_expr = HirExprId(usize::MAX);
     let (hir, defs, locals, _, _) = single_fn_hir_with_body(vec![], hir_i32(), |hir, _, _, _| {
-        let cond = int_expr(hir, 1);
+        let cond = bool_expr(hir, true);
         let then_value = int_expr(hir, 20);
         let then_break = expr(hir, HirExprKind::Break(Some(then_value)));
         let then_stmt = semi_stmt(hir, then_break);
@@ -563,7 +572,7 @@ fn typeck_ctx_infers_loop_expr_type_from_break_values() {
         .results
         .get_expr_ty(loop_expr)
         .expect("loop expression should have break value type");
-    assert_eq!(output.tys.kind(loop_ty), &TyKind::Int);
+    assert_eq!(output.tys.kind(loop_ty), &TyKind::Int(IntKind::I32));
 }
 
 #[test]
@@ -599,11 +608,11 @@ fn typeck_ctx_checks_array_and_index_expression_types() {
     match output.tys.kind(array_ty) {
         TyKind::Array { elem, len } => {
             assert_eq!(*len, 2);
-            assert_eq!(output.tys.kind(*elem), &TyKind::Int);
+            assert_eq!(output.tys.kind(*elem), &TyKind::Int(IntKind::I32));
         }
         kind => panic!("expected array type, got {kind:?}"),
     }
-    assert_eq!(output.tys.kind(index_ty), &TyKind::Int);
+    assert_eq!(output.tys.kind(index_ty), &TyKind::Int(IntKind::I32));
 }
 
 #[test]
@@ -658,8 +667,8 @@ fn typeck_ctx_checks_array_field_expression_types() {
         .results
         .get_expr_ty(last_field)
         .expect("array .3 field should have element type");
-    assert_eq!(output.tys.kind(first_ty), &TyKind::Int);
-    assert_eq!(output.tys.kind(last_ty), &TyKind::Int);
+    assert_eq!(output.tys.kind(first_ty), &TyKind::Int(IntKind::I32));
+    assert_eq!(output.tys.kind(last_ty), &TyKind::Int(IntKind::I32));
 }
 
 #[test]
@@ -722,7 +731,7 @@ fn typeck_ctx_checks_borrow_expression_type() {
     match output.tys.kind(borrow_ty) {
         TyKind::Ref { mutable, inner } => {
             assert!(!*mutable);
-            assert_eq!(output.tys.kind(*inner), &TyKind::Int);
+            assert_eq!(output.tys.kind(*inner), &TyKind::Int(IntKind::I32));
         }
         kind => panic!("expected ref type, got {kind:?}"),
     }
@@ -755,7 +764,7 @@ fn typeck_ctx_checks_deref_expression_type() {
         .results
         .get_expr_ty(deref)
         .expect("deref expression should have inner type");
-    assert_eq!(output.tys.kind(deref_ty), &TyKind::Int);
+    assert_eq!(output.tys.kind(deref_ty), &TyKind::Int(IntKind::I32));
 }
 
 #[test]
@@ -878,7 +887,7 @@ fn typeck_ctx_checks_for_range_loop_variable_and_bounds() {
         .results
         .get_local_ty(loop_local)
         .expect("for range loop variable should have inferred i32 type");
-    assert_eq!(output.tys.kind(loop_local_ty), &TyKind::Int);
+    assert_eq!(output.tys.kind(loop_local_ty), &TyKind::Int(IntKind::I32));
 }
 
 #[test]
@@ -895,6 +904,37 @@ fn primitive_types_are_interned() {
     assert_ne!(int_a, unit);
     assert_ne!(unit, never);
     assert_ne!(never, error);
+}
+
+#[test]
+fn integer_kinds_have_distinct_names() {
+    let mut tys = TyStore::new();
+
+    let i8_ty = tys.int_kind(IntKind::I8);
+    let i16_ty = tys.int_kind(IntKind::I16);
+    let i32_ty = tys.int_kind(IntKind::I32);
+    let i64_ty = tys.int_kind(IntKind::I64);
+    let u8_ty = tys.int_kind(IntKind::U8);
+    let u16_ty = tys.int_kind(IntKind::U16);
+    let u32_ty = tys.int_kind(IntKind::U32);
+    let u64_ty = tys.int_kind(IntKind::U64);
+    let usize_ty = tys.int_kind(IntKind::Usize);
+    let isize_ty = tys.int_kind(IntKind::Isize);
+    let bool_ty = tys.bool();
+
+    assert_eq!(tys.kind(i8_ty), &TyKind::Int(IntKind::I8));
+    assert_eq!(tys.kind(i16_ty), &TyKind::Int(IntKind::I16));
+    assert_eq!(tys.kind(i32_ty), &TyKind::Int(IntKind::I32));
+    assert_eq!(tys.kind(i64_ty), &TyKind::Int(IntKind::I64));
+    assert_eq!(tys.kind(u8_ty), &TyKind::Int(IntKind::U8));
+    assert_eq!(tys.kind(u16_ty), &TyKind::Int(IntKind::U16));
+    assert_eq!(tys.kind(u32_ty), &TyKind::Int(IntKind::U32));
+    assert_eq!(tys.kind(u64_ty), &TyKind::Int(IntKind::U64));
+    assert_eq!(tys.kind(usize_ty), &TyKind::Int(IntKind::Usize));
+    assert_eq!(tys.kind(isize_ty), &TyKind::Int(IntKind::Isize));
+    assert_eq!(tys.kind(bool_ty), &TyKind::Bool);
+    assert_ne!(i8_ty, i16_ty);
+    assert_ne!(i32_ty, bool_ty);
 }
 
 #[test]

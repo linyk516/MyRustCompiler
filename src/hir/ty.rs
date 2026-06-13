@@ -1,4 +1,4 @@
-use crate::lexer::token::Span;
+use crate::{hir::id::DefId, lexer::token::Span, typecheck::ty::IntKind};
 
 #[derive(Debug, Clone)]
 pub struct HirTy {
@@ -8,8 +8,10 @@ pub struct HirTy {
 
 #[derive(Debug, Clone)]
 pub enum HirTyKind {
-    I32,
+    Int(IntKind),
+    Bool,
     Str,
+    Adt(DefId),
     Unit,
     Ref { mutable: bool, inner: Box<HirTy> },
 
