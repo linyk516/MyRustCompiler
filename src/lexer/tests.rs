@@ -155,6 +155,31 @@ mod lexer_ident_or_keyword_tests {
                 TokenKind::Keyword(KeywordKind::Extern)
             )),
             "str" => assert!(matches!(token.kind, TokenKind::Keyword(KeywordKind::Str))),
+            "bool" => assert!(matches!(token.kind, TokenKind::Keyword(KeywordKind::Bool))),
+            "true" => assert!(matches!(token.kind, TokenKind::Keyword(KeywordKind::True))),
+            "false" => assert!(matches!(token.kind, TokenKind::Keyword(KeywordKind::False))),
+            "struct" => assert!(matches!(
+                token.kind,
+                TokenKind::Keyword(KeywordKind::Struct)
+            )),
+            "i8" => assert!(matches!(token.kind, TokenKind::Keyword(KeywordKind::Int8))),
+            "i16" => assert!(matches!(token.kind, TokenKind::Keyword(KeywordKind::Int16))),
+            "i64" => assert!(matches!(token.kind, TokenKind::Keyword(KeywordKind::Int64))),
+            "u8" => assert!(matches!(token.kind, TokenKind::Keyword(KeywordKind::UInt8))),
+            "u16" => assert!(matches!(
+                token.kind,
+                TokenKind::Keyword(KeywordKind::UInt16)
+            )),
+            "u32" => assert!(matches!(
+                token.kind,
+                TokenKind::Keyword(KeywordKind::UInt32)
+            )),
+            "u64" => assert!(matches!(
+                token.kind,
+                TokenKind::Keyword(KeywordKind::UInt64)
+            )),
+            "usize" => assert!(matches!(token.kind, TokenKind::Keyword(KeywordKind::Usize))),
+            "isize" => assert!(matches!(token.kind, TokenKind::Keyword(KeywordKind::Isize))),
             _ => panic!("unexpected keyword text: {text}"),
         }
     }
@@ -205,7 +230,8 @@ mod lexer_ident_or_keyword_tests {
     fn lex_ident_or_keyword_covers_all_keywords() {
         let keywords = [
             "i32", "let", "if", "else", "while", "return", "mut", "fn", "for", "in", "loop",
-            "break", "continue", "extern", "str",
+            "break", "continue", "extern", "str", "bool", "true", "false", "struct", "i8", "i16",
+            "i64", "u8", "u16", "u32", "u64", "usize", "isize",
         ];
 
         for keyword in keywords {

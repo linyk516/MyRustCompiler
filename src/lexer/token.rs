@@ -36,7 +36,19 @@ pub enum TokenKind {
 /// 关键字枚举类
 #[derive(Debug, PartialEq, Clone)]
 pub enum KeywordKind {
+    Int8,
+    Int16,
     Int32,
+    Int64,
+    UInt8,
+    UInt16,
+    UInt32,
+    UInt64,
+    Usize,
+    Isize,
+    Bool,
+    True,
+    False,
     Let,
     If,
     Else,
@@ -51,12 +63,25 @@ pub enum KeywordKind {
     Continue,
     Extern,
     Str,
+    Struct,
 }
 
 impl KeywordKind {
     pub fn from_str(s: &str) -> Option<KeywordKind> {
         match s {
+            "i8" => Some(KeywordKind::Int8),
+            "i16" => Some(KeywordKind::Int16),
             "i32" => Some(KeywordKind::Int32),
+            "i64" => Some(KeywordKind::Int64),
+            "u8" => Some(KeywordKind::UInt8),
+            "u16" => Some(KeywordKind::UInt16),
+            "u32" => Some(KeywordKind::UInt32),
+            "u64" => Some(KeywordKind::UInt64),
+            "usize" => Some(KeywordKind::Usize),
+            "isize" => Some(KeywordKind::Isize),
+            "bool" => Some(KeywordKind::Bool),
+            "true" => Some(KeywordKind::True),
+            "false" => Some(KeywordKind::False),
             "let" => Some(KeywordKind::Let),
             "if" => Some(KeywordKind::If),
             "else" => Some(KeywordKind::Else),
@@ -71,6 +96,7 @@ impl KeywordKind {
             "continue" => Some(KeywordKind::Continue),
             "extern" => Some(KeywordKind::Extern),
             "str" => Some(KeywordKind::Str),
+            "struct" => Some(KeywordKind::Struct),
             _ => None,
         }
     }

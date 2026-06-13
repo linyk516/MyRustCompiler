@@ -1,4 +1,5 @@
 use crate::{
+    hir::id::DefId,
     lexer::token::Span,
     typecheck::ty::{TyId, TyVarId},
 };
@@ -49,6 +50,24 @@ pub enum TypeErrorKind {
     InvalidIndex {
         base: TyId,
         index: TyId,
+    },
+
+    UnknownField {
+        base: TyId,
+        field: String,
+    },
+
+    MissingStructField {
+        def_id: DefId,
+        field: String,
+    },
+
+    DuplicateStructField {
+        field: String,
+    },
+
+    NotStruct {
+        ty: TyId,
     },
 
     NotAssignable {

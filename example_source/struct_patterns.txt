@@ -1,0 +1,9 @@
+struct point { x: i32, y: i32 }
+
+fn main() -> i32 {
+    let pair = (1, 2);
+    let (a, b) = pair;
+    let p = point { x: a, y: b };
+    let point { x, y } = p;
+    return x + y;
+}

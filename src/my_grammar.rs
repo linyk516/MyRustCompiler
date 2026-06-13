@@ -12,7 +12,19 @@ macro_rules! rhs {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Terminals {
+    pub i8_: TerminalId,
+    pub i16_: TerminalId,
     pub i32_: TerminalId,
+    pub i64_: TerminalId,
+    pub u8_: TerminalId,
+    pub u16_: TerminalId,
+    pub u32_: TerminalId,
+    pub u64_: TerminalId,
+    pub usize_: TerminalId,
+    pub isize_: TerminalId,
+    pub bool_: TerminalId,
+    pub true_: TerminalId,
+    pub false_: TerminalId,
     pub let_: TerminalId,
     pub if_: TerminalId,
     pub else_: TerminalId,
@@ -27,6 +39,7 @@ pub struct Terminals {
     pub continue_: TerminalId,
     pub extern_: TerminalId,
     pub str_: TerminalId,
+    pub struct_: TerminalId,
     pub ident: TerminalId,
     pub literal_i32: TerminalId,
     pub literal_string: TerminalId,
@@ -61,16 +74,35 @@ pub struct Terminals {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ProdTag {
     VarAttrMut,
+    TyI8,
+    TyI16,
     TyI32,
+    TyI64,
+    TyU8,
+    TyU16,
+    TyU32,
+    TyU64,
+    TyUsize,
+    TyIsize,
+    TyBool,
     TyStr,
+    TyAdt,
     LValAddr,
     AddrAddrElem,
     AddrElemIdent,
+    AddrElemIdentTailEmpty,
+    AddrElemIdentTailStructLit,
     ProgramDeclList,
     DeclListEmpty,
     DeclListDeclDeclList,
     DeclFnDecl,
     DeclExternFnDecl,
+    DeclStructDecl,
+    StructDeclNamed,
+    StructFieldListEmpty,
+    StructFieldListField,
+    StructFieldListFieldList,
+    StructFieldNamed,
     FnDeclSigBlock,
     ExternFnDeclNoRet,
     ExternFnDeclRetTy,
@@ -93,6 +125,22 @@ pub enum ProdTag {
     ReturnStmtExpr,
     VarDeclNoTy,
     VarDeclWithTy,
+    LetDeclNoTy,
+    LetDeclWithTy,
+    PatIdent,
+    PatIdentTailEmpty,
+    PatIdentTailStruct,
+    PatMutIdent,
+    PatTuple,
+    PatTupleInnerEmpty,
+    PatTupleInnerPat,
+    PatListEmpty,
+    PatListPat,
+    PatListPatList,
+    StructPatFieldListEmpty,
+    StructPatFieldListField,
+    StructPatFieldListFieldList,
+    StructPatFieldNamed,
     StmtVarDecl,
     VarDeclStmt,
     StmtAssign,
@@ -104,6 +152,8 @@ pub enum ProdTag {
     AddExprTerm,
     TermFactor,
     FactorNum,
+    FactorTrue,
+    FactorFalse,
     FactorString,
     NumLiteralI32,
     FactorLVal,
@@ -122,9 +172,14 @@ pub enum ProdTag {
     MulOpStar,
     MulOpSlash,
     FactorCall,
+    FactorStructLit,
     ArgListEmpty,
     ArgListExpr,
     ArgListExprList,
+    StructLitFieldListEmpty,
+    StructLitFieldListField,
+    StructLitFieldListFieldList,
+    StructLitFieldNamed,
     StmtIf,
     IfStmt,
     ElsePartEmpty,
@@ -176,6 +231,7 @@ pub enum ProdTag {
     TupleElemListExpr,
     TupleElemListExprList,
     AddrElemField,
+    AddrElemNamedField,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,7 +289,19 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     let mut prod_tags = Vec::new();
 
     // 关键字
+    let i8_ = g.add_terminal("i8");
+    let i16_ = g.add_terminal("i16");
     let i32_ = g.add_terminal("i32");
+    let i64_ = g.add_terminal("i64");
+    let u8_ = g.add_terminal("u8");
+    let u16_ = g.add_terminal("u16");
+    let u32_ = g.add_terminal("u32");
+    let u64_ = g.add_terminal("u64");
+    let usize_ = g.add_terminal("usize");
+    let isize_ = g.add_terminal("isize");
+    let bool_ = g.add_terminal("bool");
+    let true_ = g.add_terminal("true");
+    let false_ = g.add_terminal("false");
     let let_ = g.add_terminal("let");
     let if_ = g.add_terminal("if");
     let else_ = g.add_terminal("else");
@@ -248,6 +316,7 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     let continue_ = g.add_terminal("continue");
     let extern_ = g.add_terminal("extern");
     let str_ = g.add_terminal("str");
+    let struct_ = g.add_terminal("struct");
 
     // 标识符
     let ident = g.add_terminal("id");
@@ -308,6 +377,7 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     let l_val = g.add_non_terminal("l_val");
     let addr = g.add_non_terminal("addr");
     let addr_elem = g.add_non_terminal("addr_elem");
+    let addr_elem_ident_tail = g.add_non_terminal("addr_elem_ident_tail");
 
     add_tagged_prod(
         &mut g,
@@ -316,7 +386,17 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         rhs!(mut_),
         ProdTag::VarAttrMut,
     );
+    add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(i8_), ProdTag::TyI8);
+    add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(i16_), ProdTag::TyI16);
     add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(i32_), ProdTag::TyI32);
+    add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(i64_), ProdTag::TyI64);
+    add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(u8_), ProdTag::TyU8);
+    add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(u16_), ProdTag::TyU16);
+    add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(u32_), ProdTag::TyU32);
+    add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(u64_), ProdTag::TyU64);
+    add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(usize_), ProdTag::TyUsize);
+    add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(isize_), ProdTag::TyIsize);
+    add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(bool_), ProdTag::TyBool);
     add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(str_), ProdTag::TyStr);
     add_tagged_prod(&mut g, &mut prod_tags, l_val, rhs!(addr), ProdTag::LValAddr);
     add_tagged_prod(
@@ -330,8 +410,15 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         &mut g,
         &mut prod_tags,
         addr_elem,
-        rhs!(ident),
+        rhs!(ident, addr_elem_ident_tail),
         ProdTag::AddrElemIdent,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        addr_elem_ident_tail,
+        rhs!(),
+        ProdTag::AddrElemIdentTailEmpty,
     );
 
     /*
@@ -586,6 +673,13 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
        <变量声明> -> <变量属性> <ID> ':' <类型>
     */
     let var_decl = g.add_non_terminal("var_decl");
+    let let_decl = g.add_non_terminal("let_decl");
+    let pat = g.add_non_terminal("pat");
+    let pat_ident_tail = g.add_non_terminal("pat_ident_tail");
+    let pat_tuple_inner = g.add_non_terminal("pat_tuple_inner");
+    let pat_list = g.add_non_terminal("pat_list");
+    let struct_pat_field_list = g.add_non_terminal("struct_pat_field_list");
+    let struct_pat_field = g.add_non_terminal("struct_pat_field");
     add_tagged_prod(
         &mut g,
         &mut prod_tags,
@@ -599,6 +693,83 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         var_decl,
         rhs!(var_attr, ident, colon, ty),
         ProdTag::VarDeclWithTy,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        let_decl,
+        rhs!(pat),
+        ProdTag::LetDeclNoTy,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        let_decl,
+        rhs!(pat, colon, ty),
+        ProdTag::LetDeclWithTy,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        pat,
+        rhs!(ident, pat_ident_tail),
+        ProdTag::PatIdent,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        pat_ident_tail,
+        rhs!(),
+        ProdTag::PatIdentTailEmpty,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        pat,
+        rhs!(mut_, ident),
+        ProdTag::PatMutIdent,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        pat,
+        rhs!(l_paren, pat_tuple_inner, r_paren),
+        ProdTag::PatTuple,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        pat_tuple_inner,
+        rhs!(),
+        ProdTag::PatTupleInnerEmpty,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        pat_tuple_inner,
+        rhs!(pat, comma, pat_list),
+        ProdTag::PatTupleInnerPat,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        pat_list,
+        rhs!(),
+        ProdTag::PatListEmpty,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        pat_list,
+        rhs!(pat),
+        ProdTag::PatListPat,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        pat_list,
+        rhs!(pat, comma, pat_list),
+        ProdTag::PatListPatList,
     );
 
     /*
@@ -618,7 +789,7 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         &mut g,
         &mut prod_tags,
         var_decl_stmt,
-        rhs!(let_, var_decl, semicolon),
+        rhs!(let_, let_decl, semicolon),
         ProdTag::VarDeclStmt,
     );
 
@@ -660,7 +831,7 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         &mut g,
         &mut prod_tags,
         var_init_stmt,
-        rhs!(let_, var_decl, assignment, expr, semicolon),
+        rhs!(let_, let_decl, assignment, expr, semicolon),
         ProdTag::VarInitStmt,
     );
 
@@ -711,6 +882,20 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         factor,
         rhs!(num),
         ProdTag::FactorNum,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        factor,
+        rhs!(true_),
+        ProdTag::FactorTrue,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        factor,
+        rhs!(false_),
+        ProdTag::FactorFalse,
     );
     add_tagged_prod(
         &mut g,
@@ -853,6 +1038,173 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
     );
 
     /*
+       3.6 条件表达式（用于 if/while 条件后面紧跟语句块的位置）
+       这里排除裸结构体字面量，避免 `if Foo { ... }` 和 `Foo { ... }`
+       之间的经典二义性；需要结构体字面量参与条件表达式时可写成 `(Foo { ... })`。
+    */
+    let cond_expr = g.add_non_terminal("cond_expr");
+    let cond_add_expr = g.add_non_terminal("cond_add_expr");
+    let cond_term = g.add_non_terminal("cond_term");
+    let cond_factor = g.add_non_terminal("cond_factor");
+    let cond_l_val = g.add_non_terminal("cond_l_val");
+    let cond_addr = g.add_non_terminal("cond_addr");
+    let cond_addr_elem = g.add_non_terminal("cond_addr_elem");
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_expr,
+        rhs!(cond_add_expr),
+        ProdTag::ExprAdd,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_expr,
+        rhs!(cond_expr, cmp_op, cond_add_expr),
+        ProdTag::ExprCmp,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_add_expr,
+        rhs!(cond_term),
+        ProdTag::AddExprTerm,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_add_expr,
+        rhs!(cond_add_expr, add_op, cond_term),
+        ProdTag::AddExprBinary,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_term,
+        rhs!(cond_factor),
+        ProdTag::TermFactor,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_term,
+        rhs!(cond_term, mul_op, cond_factor),
+        ProdTag::TermBinary,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_factor,
+        rhs!(num),
+        ProdTag::FactorNum,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_factor,
+        rhs!(true_),
+        ProdTag::FactorTrue,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_factor,
+        rhs!(false_),
+        ProdTag::FactorFalse,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_factor,
+        rhs!(literal_string),
+        ProdTag::FactorString,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_factor,
+        rhs!(cond_l_val),
+        ProdTag::FactorLVal,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_factor,
+        rhs!(l_paren, expr, r_paren),
+        ProdTag::FactorGroupedExpr,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_factor,
+        rhs!(ident, l_paren, arg_list, r_paren),
+        ProdTag::FactorCall,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_l_val,
+        rhs!(cond_addr),
+        ProdTag::LValAddr,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_l_val,
+        rhs!(star, cond_l_val),
+        ProdTag::LValDeref,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_addr,
+        rhs!(cond_addr_elem),
+        ProdTag::AddrAddrElem,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_addr,
+        rhs!(amp, cond_addr),
+        ProdTag::AddrRef,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_addr,
+        rhs!(amp, mut_, cond_addr),
+        ProdTag::AddrRefMut,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_addr_elem,
+        rhs!(ident),
+        ProdTag::AddrElemIdent,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_addr_elem,
+        rhs!(cond_addr_elem, l_brace, expr, r_brace),
+        ProdTag::AddrElemIndex,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_addr_elem,
+        rhs!(cond_addr_elem, dot, num),
+        ProdTag::AddrElemField,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        cond_addr_elem,
+        rhs!(cond_addr_elem, dot, ident),
+        ProdTag::AddrElemNamedField,
+    );
+
+    /*
        Part4
        4.1 选择结构（依赖1.1、3.1，拓展1.2）
        <语句> -> <if语句>
@@ -866,7 +1218,7 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         &mut g,
         &mut prod_tags,
         if_stmt,
-        rhs!(if_, expr, block, else_part),
+        rhs!(if_, cond_expr, block, else_part),
         ProdTag::IfStmt,
     );
     add_tagged_prod(
@@ -897,7 +1249,7 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         &mut g,
         &mut prod_tags,
         else_part,
-        rhs!(else_, if_, expr, block, else_part),
+        rhs!(else_, if_, cond_expr, block, else_part),
         ProdTag::ElsePartIf,
     );
 
@@ -932,7 +1284,7 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         &mut g,
         &mut prod_tags,
         while_stmt,
-        rhs!(while_, expr, block),
+        rhs!(while_, cond_expr, block),
         ProdTag::WhileStmt,
     );
 
@@ -962,7 +1314,7 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         &mut g,
         &mut prod_tags,
         range_expr,
-        rhs!(expr, dotdot, expr),
+        rhs!(cond_expr, dotdot, cond_expr),
         ProdTag::RangeExpr,
     );
 
@@ -1136,7 +1488,7 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         &mut g,
         &mut prod_tags,
         branch_expr,
-        rhs!(if_, expr, block_expr, else_, block_expr),
+        rhs!(if_, cond_expr, block_expr, else_, block_expr),
         ProdTag::BranchExpr,
     );
 
@@ -1347,11 +1699,166 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         ProdTag::AddrElemField,
     );
 
+    /*
+       Part10
+       10.1 命名结构体（拓展顶层声明与类型）
+       <声明> -> <结构体声明>
+       <结构体声明> -> struct <ID> '{' <结构体字段列表> '}'
+       <结构体字段列表> -> 空 | <结构体字段> | <结构体字段> ',' <结构体字段列表>
+       <结构体字段> -> <ID> ':' <类型>
+       <类型> -> <ID>
+    */
+    let struct_decl = g.add_non_terminal("struct_decl");
+    let struct_field_list = g.add_non_terminal("struct_field_list");
+    let struct_field = g.add_non_terminal("struct_field");
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        decl,
+        rhs!(struct_decl),
+        ProdTag::DeclStructDecl,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        struct_decl,
+        rhs!(struct_, ident, l_bracket, struct_field_list, r_bracket),
+        ProdTag::StructDeclNamed,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        struct_field_list,
+        rhs!(),
+        ProdTag::StructFieldListEmpty,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        struct_field_list,
+        rhs!(struct_field),
+        ProdTag::StructFieldListField,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        struct_field_list,
+        rhs!(struct_field, comma, struct_field_list),
+        ProdTag::StructFieldListFieldList,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        struct_field,
+        rhs!(ident, colon, ty),
+        ProdTag::StructFieldNamed,
+    );
+    add_tagged_prod(&mut g, &mut prod_tags, ty, rhs!(ident), ProdTag::TyAdt);
+
+    /*
+       10.2 结构体字面量与命名字段访问
+       <因子> -> <ID> '{' <结构体字面量字段列表> '}'
+       <结构体字面量字段列表> -> 空 | <结构体字面量字段> | <结构体字面量字段> ',' <结构体字面量字段列表>
+       <结构体字面量字段> -> <ID> ':' <表达式>
+       <可取元素> -> <可取元素> '.' <ID>
+    */
+    let struct_lit_field_list = g.add_non_terminal("struct_lit_field_list");
+    let struct_lit_field = g.add_non_terminal("struct_lit_field");
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        addr_elem_ident_tail,
+        rhs!(l_bracket, struct_lit_field_list, r_bracket),
+        ProdTag::AddrElemIdentTailStructLit,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        struct_lit_field_list,
+        rhs!(),
+        ProdTag::StructLitFieldListEmpty,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        struct_lit_field_list,
+        rhs!(struct_lit_field),
+        ProdTag::StructLitFieldListField,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        struct_lit_field_list,
+        rhs!(struct_lit_field, comma, struct_lit_field_list),
+        ProdTag::StructLitFieldListFieldList,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        struct_lit_field,
+        rhs!(ident, colon, expr),
+        ProdTag::StructLitFieldNamed,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        pat_ident_tail,
+        rhs!(l_bracket, struct_pat_field_list, r_bracket),
+        ProdTag::PatIdentTailStruct,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        struct_pat_field_list,
+        rhs!(),
+        ProdTag::StructPatFieldListEmpty,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        struct_pat_field_list,
+        rhs!(struct_pat_field),
+        ProdTag::StructPatFieldListField,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        struct_pat_field_list,
+        rhs!(struct_pat_field, comma, struct_pat_field_list),
+        ProdTag::StructPatFieldListFieldList,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        struct_pat_field,
+        rhs!(ident),
+        ProdTag::StructPatFieldNamed,
+    );
+    add_tagged_prod(
+        &mut g,
+        &mut prod_tags,
+        addr_elem,
+        rhs!(addr_elem, dot, ident),
+        ProdTag::AddrElemNamedField,
+    );
+
     g.set_start(program);
     let eof = g.add_terminal("eof");
     g.set_eof(eof);
     let terminals = Terminals {
+        i8_,
+        i16_,
         i32_,
+        i64_,
+        u8_,
+        u16_,
+        u32_,
+        u64_,
+        usize_,
+        isize_,
+        bool_,
+        true_,
+        false_,
         let_,
         if_,
         else_,
@@ -1366,6 +1873,7 @@ fn build_my_grammar_context() -> Result<GrammarContext, GrammarBuilderErr> {
         continue_,
         extern_,
         str_,
+        struct_,
         ident,
         literal_i32,
         literal_string,

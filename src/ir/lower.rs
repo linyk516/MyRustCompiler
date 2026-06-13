@@ -16,12 +16,13 @@ use crate::{
     thir::{
         id::{ThirBodyId, ThirExprId, ThirLocalId, ThirStmtId},
         node::{
-            ThirBlock, ThirBody, ThirExprKind, ThirPlace, ThirPlaceKind, ThirProgram, ThirStmtKind,
+            ThirBlock, ThirBody, ThirExprKind, ThirPat, ThirPatKind, ThirPlace, ThirPlaceKind,
+            ThirProgram, ThirStmtKind,
         },
     },
     typecheck::{
         result::TypeckResults,
-        ty::{TyId, TyKind, TyStore},
+        ty::{IntKind, TyId, TyKind, TyStore},
     },
 };
 
@@ -209,7 +210,7 @@ impl<'thir> IrLowerCtx<'thir> {
     }
 
     fn ir_ty_from_source_ty(&self, ty: TyId) -> IrTy {
-        ir_ty_from_source_ty(self.tys, ty)
+        ir_ty_from_source_ty(self.tys, self.typeck, ty)
     }
 
     fn function_symbol_name(&self, owner: crate::hir::id::DefId) -> String {
@@ -353,21 +354,9 @@ impl<'a> FunctionLowerer<'a> {
         })?;
 
         match &stmt_data.kind {
-            ThirStmtKind::Let { local, init } => {
+            ThirStmtKind::Let { pat, init } => {
                 if let Some(init) = init {
-                    let local_data = self.body.local(*local).ok_or_else(|| {
-                        self.error(
-                            IrLowerErrorKind::MissingLocal { id: local.index() },
-                            stmt_data.span.clone(),
-                        )
-                    })?;
-                    let addr = self.local_addr(*local, &stmt_data.span)?;
-                    self.lower_expr_into_addr(
-                        *init,
-                        addr,
-                        self.ir_ty(local_data.ty),
-                        stmt_data.span.clone(),
-                    )?;
+                    self.lower_let_pattern(pat, *init, stmt_data.span.clone())?;
                 }
             }
             ThirStmtKind::Expr(expr) | ThirStmtKind::Semi(expr) => {
@@ -386,8 +375,16 @@ impl<'a> FunctionLowerer<'a> {
         let kind = expr_data.kind.clone();
 
         match kind {
-            ThirExprKind::Int(value) => Ok(self.builder.const_int(value, IrTy::I32)),
+            ThirExprKind::Int(value) => Ok(self.builder.const_int(value, self.ir_ty(expr_ty))),
+            ThirExprKind::Bool(value) => {
+                Ok(self.builder.const_int(if value { 1 } else { 0 }, IrTy::I1))
+            }
             ThirExprKind::String(value) => self.lower_string_value(value, span),
+            ThirExprKind::StructLit { .. } => {
+                let addr = self.create_temp_slot(expr_ty, "struct", span.clone())?;
+                self.lower_expr_into_addr(expr, addr, self.ir_ty(expr_ty), span.clone())?;
+                self.builder.emit_load(self.ir_ty(expr_ty), addr, span)
+            }
             ThirExprKind::Use(place) => self.load_place_value(&place, span),
             ThirExprKind::Binary { op, lhs, rhs } => {
                 self.lower_binary_expr(op, lhs, rhs, expr_ty, span)
@@ -510,6 +507,132 @@ impl<'a> FunctionLowerer<'a> {
         }
     }
 
+    fn lower_let_pattern(
+        &mut self,
+        pat: &ThirPat,
+        init: ThirExprId,
+        span: Span,
+    ) -> IrLowerResult<()> {
+        match &pat.kind {
+            ThirPatKind::Binding(local) => {
+                let local_data = self.body.local(*local).ok_or_else(|| {
+                    self.error(
+                        IrLowerErrorKind::MissingLocal { id: local.index() },
+                        span.clone(),
+                    )
+                })?;
+                let addr = self.local_addr(*local, &span)?;
+                self.lower_expr_into_addr(init, addr, self.ir_ty(local_data.ty), span)
+            }
+            ThirPatKind::Wildcard => {
+                self.lower_expr_value(init)?;
+                Ok(())
+            }
+            ThirPatKind::Tuple(_) | ThirPatKind::Struct { .. } => {
+                let init_ty = self.expr(init)?.ty;
+                let init_ir_ty = self.ir_ty(init_ty);
+                let addr = self.create_temp_slot(init_ty, "pat.init", span.clone())?;
+                self.lower_expr_into_addr(init, addr, init_ir_ty, span.clone())?;
+                self.bind_pattern_from_addr(pat, addr, init_ty, span)
+            }
+        }
+    }
+
+    fn bind_pattern_from_addr(
+        &mut self,
+        pat: &ThirPat,
+        src_addr: IrValueId,
+        src_ty: TyId,
+        span: Span,
+    ) -> IrLowerResult<()> {
+        match &pat.kind {
+            ThirPatKind::Wildcard => Ok(()),
+            ThirPatKind::Binding(local) => {
+                let local_data = self.body.local(*local).ok_or_else(|| {
+                    self.error(
+                        IrLowerErrorKind::MissingLocal { id: local.index() },
+                        span.clone(),
+                    )
+                })?;
+                let value_ty = self.ir_ty(local_data.ty);
+                let value = self
+                    .builder
+                    .emit_load(value_ty.clone(), src_addr, span.clone())?;
+                let dst = self.local_addr(*local, &span)?;
+                self.emit_store_to_addr(value, dst, value_ty, span)
+            }
+            ThirPatKind::Tuple(elems) => {
+                for (index, elem) in elems.iter().enumerate() {
+                    let field_ty = self.field_source_ty(src_ty, index, &span)?;
+                    let field_addr =
+                        self.aggregate_field_addr(src_ty, src_addr, index, span.clone())?;
+                    self.bind_pattern_from_addr(elem, field_addr, field_ty, span.clone())?;
+                }
+                Ok(())
+            }
+            ThirPatKind::Struct { def_id: _, fields } => {
+                for (index, elem) in fields {
+                    let field_ty = self.field_source_ty(src_ty, *index, &span)?;
+                    let field_addr =
+                        self.aggregate_field_addr(src_ty, src_addr, *index, span.clone())?;
+                    self.bind_pattern_from_addr(elem, field_addr, field_ty, span.clone())?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn aggregate_field_addr(
+        &mut self,
+        aggregate_ty: TyId,
+        aggregate_addr: IrValueId,
+        index: usize,
+        span: Span,
+    ) -> IrLowerResult<IrValueId> {
+        let source_ty = self.ir_ty(aggregate_ty);
+        let zero = self.builder.const_int(0, IrTy::I32);
+        let index = self.builder.const_int(index as i32, IrTy::I32);
+        self.builder
+            .emit_gep(source_ty, aggregate_addr, vec![zero, index], span)
+    }
+
+    fn field_source_ty(
+        &self,
+        aggregate_ty: TyId,
+        index: usize,
+        span: &Span,
+    ) -> IrLowerResult<TyId> {
+        match self.tys.kind(aggregate_ty) {
+            TyKind::Tuple(elems) => elems.get(index).copied().ok_or_else(|| {
+                self.error(
+                    IrLowerErrorKind::Internal {
+                        message: format!("tuple pattern field {index} is out of range"),
+                    },
+                    span.clone(),
+                )
+            }),
+            TyKind::Adt(def_id) => self
+                .typeck
+                .get_struct_field_tys(*def_id)
+                .and_then(|fields| fields.get(index))
+                .copied()
+                .ok_or_else(|| {
+                    self.error(
+                        IrLowerErrorKind::Internal {
+                            message: format!("struct pattern field {index} is out of range"),
+                        },
+                        span.clone(),
+                    )
+                }),
+            _ => Err(self.error(
+                IrLowerErrorKind::Internal {
+                    message: format!("cannot destructure non-aggregate type {:?}", aggregate_ty),
+                },
+                span.clone(),
+            )),
+        }
+    }
+
     fn lower_string_value(&mut self, value: String, span: Span) -> IrLowerResult<IrValueId> {
         let mut bytes = value.into_bytes();
         bytes.push(0);
@@ -567,9 +690,9 @@ impl<'a> FunctionLowerer<'a> {
         result_source_ty: TyId,
         span: Span,
     ) -> IrLowerResult<IrValueId> {
+        let operand_ty = self.ir_ty(self.expr(lhs)?.ty);
         let lhs = self.lower_expr_value(lhs)?;
         let rhs = self.lower_expr_value(rhs)?;
-        let operand_ty = IrTy::I32;
 
         if let Some(op) = IrBinaryOp::from_binary(op.clone()) {
             return self.builder.emit_binary(op, operand_ty, lhs, rhs, span);
@@ -834,9 +957,10 @@ impl<'a> FunctionLowerer<'a> {
         let kind = expr_data.kind.clone();
         if let ThirExprKind::Binary { op, lhs, rhs } = kind {
             if let Some(pred) = IrIcmpPred::from_binary(op) {
+                let operand_ty = self.ir_ty(self.expr(lhs)?.ty);
                 let lhs = self.lower_expr_value(lhs)?;
                 let rhs = self.lower_expr_value(rhs)?;
-                return self.builder.emit_icmp(pred, IrTy::I32, lhs, rhs, span);
+                return self.builder.emit_icmp(pred, operand_ty, lhs, rhs, span);
             }
         }
 
@@ -894,6 +1018,10 @@ impl<'a> FunctionLowerer<'a> {
                 self.lower_aggregate_elems_into_addr(&elems, expr_ty, dst_addr, span)?;
                 Ok(true)
             }
+            ThirExprKind::StructLit { fields, .. } => {
+                self.lower_struct_fields_into_addr(&fields, expr_ty, dst_addr, span)?;
+                Ok(true)
+            }
             ThirExprKind::Range { start, end } => {
                 let elems = [start, end];
                 self.lower_aggregate_elems_into_addr(&elems, expr_ty, dst_addr, span)?;
@@ -915,6 +1043,30 @@ impl<'a> FunctionLowerer<'a> {
             let elem_ty = self.ir_ty(self.expr(*elem)?.ty);
             let zero = self.builder.const_int(0, IrTy::I32);
             let index = self.builder.const_int(index as i32, IrTy::I32);
+            let elem_addr = self.builder.emit_gep(
+                source_ty.clone(),
+                dst_addr,
+                vec![zero, index],
+                span.clone(),
+            )?;
+            self.lower_expr_into_addr(*elem, elem_addr, elem_ty, span.clone())?;
+        }
+
+        Ok(())
+    }
+
+    fn lower_struct_fields_into_addr(
+        &mut self,
+        fields: &[(usize, ThirExprId)],
+        aggregate_ty: TyId,
+        dst_addr: IrValueId,
+        span: Span,
+    ) -> IrLowerResult<()> {
+        let source_ty = self.ir_ty(aggregate_ty);
+        for (index, elem) in fields {
+            let elem_ty = self.ir_ty(self.expr(*elem)?.ty);
+            let zero = self.builder.const_int(0, IrTy::I32);
+            let index = self.builder.const_int(*index as i32, IrTy::I32);
             let elem_addr = self.builder.emit_gep(
                 source_ty.clone(),
                 dst_addr,
@@ -1065,7 +1217,7 @@ impl<'a> FunctionLowerer<'a> {
     }
 
     fn ir_ty(&self, ty: TyId) -> IrTy {
-        ir_ty_from_source_ty(self.tys, ty)
+        ir_ty_from_source_ty(self.tys, self.typeck, ty)
     }
 
     fn error(&self, kind: IrLowerErrorKind, span: Span) -> IrLowerError {
@@ -1433,20 +1585,37 @@ impl IrBuilder {
     }
 }
 
-fn ir_ty_from_source_ty(tys: &TyStore, ty: TyId) -> IrTy {
+fn ir_ty_from_source_ty(tys: &TyStore, typeck: &TypeckResults, ty: TyId) -> IrTy {
     match tys.kind(ty) {
-        TyKind::Int => IrTy::I32,
+        TyKind::Int(kind) => match kind {
+            IntKind::I8 | IntKind::U8 => IrTy::I8,
+            IntKind::I16 | IntKind::U16 => IrTy::I16,
+            IntKind::I32 | IntKind::U32 => IrTy::I32,
+            IntKind::I64 | IntKind::U64 | IntKind::Usize | IntKind::Isize => IrTy::I64,
+        },
+        TyKind::Bool => IrTy::I1,
         TyKind::Str => IrTy::Ptr,
+        TyKind::Adt(def_id) => typeck
+            .get_struct_field_tys(*def_id)
+            .map(|fields| {
+                IrTy::Struct(
+                    fields
+                        .iter()
+                        .map(|field| ir_ty_from_source_ty(tys, typeck, *field))
+                        .collect(),
+                )
+            })
+            .unwrap_or(IrTy::Error),
         TyKind::Unit => IrTy::Void,
         TyKind::Never => IrTy::Void,
         TyKind::Tuple(elems) => IrTy::Struct(
             elems
                 .iter()
-                .map(|elem| ir_ty_from_source_ty(tys, *elem))
+                .map(|elem| ir_ty_from_source_ty(tys, typeck, *elem))
                 .collect(),
         ),
         TyKind::Array { elem, len } => IrTy::Array {
-            elem: Box::new(ir_ty_from_source_ty(tys, *elem)),
+            elem: Box::new(ir_ty_from_source_ty(tys, typeck, *elem)),
             len: *len,
         },
         TyKind::Ref { .. } => IrTy::Ptr,

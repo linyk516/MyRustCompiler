@@ -2,7 +2,8 @@ use std::fmt::{Display, Write};
 
 use crate::ast::ty::{
     BinaryOp, Block, ElseBranch, Expr, ExprKind, ExternFnDecl, FnDecl, FnSig, Ident, Item,
-    ItemKind, Param, Place, PlaceKind, Program, Stmt, StmtKind, Ty, TyKind,
+    ItemKind, Param, Pat, PatKind, Place, PlaceKind, Program, Stmt, StmtKind, StructDecl, Ty,
+    TyKind,
 };
 
 impl Program {
@@ -50,6 +51,7 @@ impl AstDumper {
         match &item.kind {
             ItemKind::Fn(func) => self.fn_decl(func, indent),
             ItemKind::ExternFn(func) => self.extern_fn_decl(func, indent),
+            ItemKind::Struct(strukt) => self.struct_decl(strukt, indent),
         }
     }
 
@@ -60,6 +62,22 @@ impl AstDumper {
 
     fn extern_fn_decl(&mut self, func: &ExternFnDecl, indent: usize) {
         self.fn_sig("ExternFn", &func.sig, indent);
+    }
+
+    fn struct_decl(&mut self, strukt: &StructDecl, indent: usize) {
+        self.line(indent, format!("Struct {}", self.ident(&strukt.name)));
+        if strukt.fields.is_empty() {
+            self.line(indent + 1, "Fields <empty>");
+            return;
+        }
+
+        self.line(indent + 1, "Fields");
+        for field in &strukt.fields {
+            self.line(
+                indent + 2,
+                format!("{}: {}", self.ident(&field.name), self.ty_inline(&field.ty)),
+            );
+        }
     }
 
     fn fn_sig(&mut self, label: &str, sig: &FnSig, indent: usize) {
@@ -107,21 +125,14 @@ impl AstDumper {
 
     fn stmt(&mut self, stmt: &Stmt, indent: usize) {
         match &stmt.kind {
-            StmtKind::Let {
-                mutable,
-                name,
-                ty,
-                init,
-            } => {
-                let mut text = String::from("Let ");
-                if *mutable {
-                    text.push_str("mut ");
-                }
-                text.push_str(self.ident(name));
+            StmtKind::Let { pat, ty, init } => {
+                let mut text = String::from("Let");
                 if let Some(ty) = ty {
                     let _ = write!(text, ": {}", self.ty_inline(ty));
                 }
                 self.line(indent, text);
+                self.line(indent + 1, "Pat");
+                self.pat(pat, indent + 2);
                 if let Some(init) = init {
                     self.line(indent + 1, "Init");
                     self.expr(init, indent + 2);
@@ -228,12 +239,20 @@ impl AstDumper {
     fn expr(&mut self, expr: &Expr, indent: usize) {
         match &expr.kind {
             ExprKind::Int(value) => self.line(indent, format!("Int {value}")),
+            ExprKind::Bool(value) => self.line(indent, format!("Bool {value}")),
             ExprKind::String(value) => {
                 self.line(indent, format!("String \"{}\"", escape_string(value)))
             }
             ExprKind::Place(place) => {
                 self.line(indent, "PlaceExpr");
                 self.place(place, indent + 1);
+            }
+            ExprKind::StructLit { name, fields } => {
+                self.line(indent, format!("StructLit {}", self.ident(name)));
+                for field in fields {
+                    self.line(indent + 1, format!("Field {}", self.ident(&field.name)));
+                    self.expr(&field.expr, indent + 2);
+                }
             }
             ExprKind::Binary { op, lhs, rhs } => {
                 self.line(indent, format!("Binary {}", self.binary_op(op)));
@@ -322,6 +341,37 @@ impl AstDumper {
                 self.line(indent, format!("Field .{index}"));
                 self.place(base, indent + 1);
             }
+            PlaceKind::NamedField { base, name } => {
+                self.line(indent, format!("NamedField .{}", self.ident(name)));
+                self.place(base, indent + 1);
+            }
+        }
+    }
+
+    fn pat(&mut self, pat: &Pat, indent: usize) {
+        match &pat.kind {
+            PatKind::Wildcard => self.line(indent, "Wildcard"),
+            PatKind::Binding { mutable, name } => {
+                let mut text = String::from("Binding ");
+                if *mutable {
+                    text.push_str("mut ");
+                }
+                text.push_str(self.ident(name));
+                self.line(indent, text);
+            }
+            PatKind::Tuple(elems) => {
+                self.line(indent, "TuplePat");
+                for elem in elems {
+                    self.pat(elem, indent + 1);
+                }
+            }
+            PatKind::Struct { name, fields } => {
+                self.line(indent, format!("StructPat {}", self.ident(name)));
+                for field in fields {
+                    self.line(indent + 1, format!("Field {}", self.ident(&field.name)));
+                    self.pat(&field.pat, indent + 2);
+                }
+            }
         }
     }
 
@@ -331,8 +381,10 @@ impl AstDumper {
 
     fn ty_inline(&self, ty: &Ty) -> String {
         match &ty.kind {
-            TyKind::I32 => "i32".to_string(),
+            TyKind::Int(kind) => kind.name().to_string(),
+            TyKind::Bool => "bool".to_string(),
             TyKind::Str => "str".to_string(),
+            TyKind::Adt(name) => self.ident(name).to_string(),
             TyKind::Ref { mutable, inner } => {
                 if *mutable {
                     format!("&mut {}", self.ty_inline(inner))

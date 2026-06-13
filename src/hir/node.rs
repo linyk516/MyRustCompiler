@@ -81,6 +81,7 @@ pub struct HirItem {
 pub enum HirItemKind {
     Fn(HirFn),
     ExternFn(HirExternFn),
+    Struct(HirStruct),
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +95,20 @@ pub struct HirFn {
 pub struct HirExternFn {
     pub name: String,
     pub sig: HirFnSig,
+}
+
+#[derive(Debug, Clone)]
+/// HIR 中的 named-field struct item。
+pub struct HirStruct {
+    pub name: String,
+    pub fields: Vec<HirStructField>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HirStructField {
+    pub name: String,
+    pub ty: HirTy,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -134,9 +149,7 @@ pub struct HirStmt {
 #[derive(Debug, Clone)]
 pub enum HirStmtKind {
     Let {
-        local_id: LocalId,
-        name: String,
-        mutable: bool,
+        pat: HirPat,
         ty: Option<HirTy>,
         init: Option<HirExprId>,
     },
@@ -149,6 +162,35 @@ pub enum HirStmtKind {
 }
 
 #[derive(Debug, Clone)]
+pub struct HirPat {
+    pub span: Span,
+    pub kind: HirPatKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum HirPatKind {
+    Wildcard,
+    Binding {
+        local_id: LocalId,
+        name: String,
+        mutable: bool,
+    },
+    Tuple(Vec<HirPat>),
+    Struct {
+        def_id: DefId,
+        fields: Vec<HirStructPatField>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct HirStructPatField {
+    pub name: String,
+    pub index: usize,
+    pub pat: HirPat,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
 pub struct HirExpr {
     pub span: Span,
     pub kind: HirExprKind,
@@ -157,9 +199,15 @@ pub struct HirExpr {
 #[derive(Debug, Clone)]
 pub enum HirExprKind {
     Int(i32),
+    Bool(bool),
     String(String),
 
     Path(Res),
+
+    StructLit {
+        def_id: DefId,
+        fields: Vec<HirStructLitField>,
+    },
 
     Binary {
         op: BinaryOp,
@@ -228,6 +276,11 @@ pub enum HirExprKind {
         index: usize,
     },
 
+    NamedField {
+        base: HirExprId,
+        name: String,
+    },
+
     Array(Vec<HirExprId>),
 
     Tuple(Vec<HirExprId>),
@@ -238,6 +291,13 @@ pub enum HirExprKind {
     },
 
     Err,
+}
+
+#[derive(Debug, Clone)]
+pub struct HirStructLitField {
+    pub name: String,
+    pub expr: HirExprId,
+    pub span: Span,
 }
 
 impl HirExpr {

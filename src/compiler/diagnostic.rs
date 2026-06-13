@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use crate::{
     ast::lower::LowerError,
+    borrowck::error::{BorrowError, BorrowErrorKind},
     compiler::source::SourceFile,
     hir::error::{HirLowerError, HirLowerErrorKind},
     ir::error::IrLowerError,
@@ -32,6 +33,7 @@ pub enum DiagnosticStage {
     Lower,
     HirLower,
     Typecheck,
+    Borrowck,
     ThirLower,
     IrLower,
     FrontendBuild,
@@ -130,6 +132,9 @@ pub enum DiagnosticDetails {
         reason: String,
     },
     Typecheck {
+        reason: String,
+    },
+    Borrowck {
         reason: String,
     },
     ThirLower {
@@ -629,6 +634,50 @@ impl Diagnostic {
                     true,
                 )
             }
+            TypeErrorKind::UnknownField { base, field } => {
+                let base_text = Self::type_text(*base, tys);
+                Self::type_error(
+                    "E0417",
+                    "unknown struct field",
+                    source,
+                    format!("type `{base_text}` has no field `{field}`"),
+                )
+                .label(
+                    span,
+                    range,
+                    format!("unknown field `{field}` on `{base_text}`"),
+                    true,
+                )
+            }
+            TypeErrorKind::MissingStructField { def_id, field } => Self::type_error(
+                "E0418",
+                "missing struct field",
+                source,
+                format!("struct `{def_id:?}` is missing field `{field}`"),
+            )
+            .label(span, range, format!("missing field `{field}`"), true),
+            TypeErrorKind::DuplicateStructField { field } => Self::type_error(
+                "E0419",
+                "duplicate struct field",
+                source,
+                format!("field `{field}` is specified more than once"),
+            )
+            .label(span, range, format!("duplicate field `{field}`"), true),
+            TypeErrorKind::NotStruct { ty } => {
+                let ty_text = Self::type_text(*ty, tys);
+                Self::type_error(
+                    "E0420",
+                    "expected struct type",
+                    source,
+                    format!("type `{ty_text}` is not a struct"),
+                )
+                .label(
+                    span,
+                    range,
+                    format!("`{ty_text}` has no named fields"),
+                    true,
+                )
+            }
             TypeErrorKind::NotAssignable { target } => {
                 let target_text = Self::type_text(*target, tys);
                 Self::type_error(
@@ -743,6 +792,43 @@ impl Diagnostic {
             )
             .label(span, range, message.clone(), true)
             .note("this usually indicates a bug in the HIR type checker"),
+        }
+    }
+
+    /// 从BorrowError构造诊断信息
+    pub fn from_borrow_error(error: &BorrowError, source: &SourceFile) -> Self {
+        let span = error.span.clone();
+        let range = SourceRange::from_span(&span, source);
+        let message = error.message();
+
+        let diagnostic = Self::error(
+            DiagnosticStage::Borrowck,
+            DiagnosticCategory::UserInput,
+            "E0501",
+            "borrow conflict",
+            source,
+            DiagnosticDetails::Borrowck {
+                reason: message.clone(),
+            },
+        )
+        .label(span, range, message, true);
+
+        match &error.kind {
+            BorrowErrorKind::ConflictingBorrow {
+                existing_span,
+                existing,
+                ..
+            }
+            | BorrowErrorKind::MutationWhileBorrowed {
+                existing_span,
+                existing,
+                ..
+            } => diagnostic.label(
+                existing_span.clone(),
+                SourceRange::from_span(existing_span, source),
+                format!("{} borrow is active here", existing.name()),
+                false,
+            ),
         }
     }
 
@@ -915,8 +1001,10 @@ impl Diagnostic {
 
     fn type_text(ty: TyId, tys: &TyStore) -> String {
         match tys.kind(ty) {
-            TyKind::Int => "i32".to_string(),
+            TyKind::Int(kind) => kind.name().to_string(),
+            TyKind::Bool => "bool".to_string(),
             TyKind::Str => "str".to_string(),
+            TyKind::Adt(def_id) => format!("{def_id:?}"),
             TyKind::Unit => "()".to_string(),
             TyKind::Never => "!".to_string(),
             TyKind::Tuple(elems) => {

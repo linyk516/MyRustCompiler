@@ -1,4 +1,4 @@
-use crate::ast::node::AstNode;
+use crate::{ast::node::AstNode, typecheck::ty::IntKind};
 
 /*
  * 一些基本的元素
@@ -9,8 +9,10 @@ pub type Ty = AstNode<TyKind>;
 
 #[derive(Debug, Clone)]
 pub enum TyKind {
-    I32,
+    Int(IntKind),
+    Bool,
     Str,
+    Adt(Ident),
     Ref { mutable: bool, inner: Box<Ty> },
     Array { elem: Box<Ty>, len: usize },
     Tuple(Vec<Ty>),
@@ -40,6 +42,7 @@ pub struct Program {
 pub enum ItemKind {
     Fn(FnDecl),
     ExternFn(ExternFnDecl),
+    Struct(StructDecl),
 }
 
 pub type Item = AstNode<ItemKind>;
@@ -53,6 +56,23 @@ pub struct FnDecl {
 #[derive(Debug, Clone)]
 pub struct ExternFnDecl {
     pub sig: FnSig,
+}
+
+/// 命名结构体声明。
+///
+/// 当前语言子集只支持 `struct Point { x: i32 }` 形式的 named-field struct。
+/// tuple struct、unit struct、泛型和 impl 会在后续阶段再扩展。
+#[derive(Debug, Clone)]
+pub struct StructDecl {
+    pub name: Ident,
+    pub fields: Vec<StructField>,
+}
+
+/// 结构体声明中的单个命名字段。
+#[derive(Debug, Clone)]
+pub struct StructField {
+    pub name: Ident,
+    pub ty: Ty,
 }
 
 #[derive(Debug, Clone)]
@@ -83,8 +103,7 @@ pub type Stmt = AstNode<StmtKind>;
 #[derive(Debug, Clone)]
 pub enum StmtKind {
     Let {
-        mutable: bool,
-        name: Ident,
+        pat: Pat,
         ty: Option<Ty>,
         init: Option<Expr>,
     },
@@ -142,9 +161,15 @@ pub type Expr = AstNode<ExprKind>;
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     Int(i32),
+    Bool(bool),
     String(String),
 
     Place(Place),
+
+    StructLit {
+        name: Ident,
+        fields: Vec<StructLitField>,
+    },
 
     Binary {
         op: BinaryOp,
@@ -188,6 +213,35 @@ pub enum ExprKind {
     },
 }
 
+/// 结构体字面量中的单个字段初始化。
+#[derive(Debug, Clone)]
+pub struct StructLitField {
+    pub name: Ident,
+    pub expr: Expr,
+}
+
+pub type Pat = AstNode<PatKind>;
+
+#[derive(Debug, Clone)]
+pub enum PatKind {
+    Wildcard,
+    Binding {
+        mutable: bool,
+        name: Ident,
+    },
+    Tuple(Vec<Pat>),
+    Struct {
+        name: Ident,
+        fields: Vec<StructPatField>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct StructPatField {
+    pub name: Ident,
+    pub pat: Pat,
+}
+
 pub type Place = AstNode<PlaceKind>;
 
 #[derive(Debug, Clone)]
@@ -199,4 +253,6 @@ pub enum PlaceKind {
     Index { base: Box<Place>, index: Box<Expr> },
 
     Field { base: Box<Place>, index: usize },
+
+    NamedField { base: Box<Place>, name: Ident },
 }

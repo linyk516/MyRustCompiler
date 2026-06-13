@@ -5,7 +5,7 @@ use crate::{
         node::NodeID,
         ty::{
             Block, ElseBranch, Expr, ExprKind, FnDecl, Item, ItemKind, Param, Place, PlaceKind,
-            Program, Stmt, StmtKind, TyKind,
+            Program, Stmt, StmtKind, StructDecl, TyKind,
         },
     },
     hir::{
@@ -13,11 +13,12 @@ use crate::{
         id::{DefId, LocalId},
         node::{
             HirBlock, HirBody, HirExpr, HirExprKind, HirFn, HirFnSig, HirItem, HirItemKind,
-            HirParam, HirProgram, HirStmt, HirStmtKind,
+            HirParam, HirPat, HirPatKind, HirProgram, HirStmt, HirStmtKind, HirStruct,
+            HirStructField, HirStructLitField, HirStructPatField,
         },
         res::Res,
         scope::{ScopeDeclareError, ScopeKind, ScopeStack},
-        table::{DefKind, DefTable, LocalKind, LocalTable},
+        table::{DefKind, DefTable, LocalKind, LocalTable, StructFieldData},
         ty::{HirTy, HirTyKind},
     },
     lexer::token::Span,
@@ -110,6 +111,24 @@ impl HirLowerer<'_> {
                     }
 
                     let id = self.defs.alloc(name, DefKind::ExternFn, span);
+                    self.item_defs.insert(item.id, id);
+                }
+                ItemKind::Struct(struct_decl) => {
+                    let name = struct_decl.name.kind.clone();
+                    let span = item.span.clone();
+
+                    if let Some((_, data)) = self.defs.get_by_names(&name) {
+                        self.emit_error(
+                            HirLowerErrorKind::DuplicateDef {
+                                name,
+                                previous: data.span.clone(),
+                            },
+                            span,
+                        );
+                        continue;
+                    }
+
+                    let id = self.defs.alloc(name, DefKind::Struct, span);
                     self.item_defs.insert(item.id, id);
                 }
             }
@@ -224,7 +243,40 @@ impl HirLowerer<'_> {
                     }),
                 })
             }
+            ItemKind::Struct(struct_decl) => {
+                let hir_struct = self.lower_struct(def_id, struct_decl);
+                Some(HirItem {
+                    def_id,
+                    span,
+                    kind: HirItemKind::Struct(hir_struct),
+                })
+            }
         }
+    }
+
+    fn lower_struct(&mut self, def_id: DefId, struct_decl: &StructDecl) -> HirStruct {
+        let name = struct_decl.name.kind.clone();
+        let fields = struct_decl
+            .fields
+            .iter()
+            .map(|field| HirStructField {
+                name: field.name.kind.clone(),
+                ty: self.lower_ty(field.ty.kind.clone(), field.ty.span.clone()),
+                span: field.name.span.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        let table_fields = fields
+            .iter()
+            .map(|field| StructFieldData {
+                name: field.name.clone(),
+                ty: field.ty.clone(),
+                span: field.span.clone(),
+            })
+            .collect();
+        self.defs.set_struct_fields(def_id, table_fields);
+
+        HirStruct { name, fields }
     }
 
     fn lower_fn(&mut self, def_id: DefId, fn_decl: &FnDecl, span: Span) -> HirFn {
@@ -352,10 +404,23 @@ impl HirLowerer<'_> {
         param_list
     }
 
-    fn lower_ty(&self, ast_ty_kind: TyKind, span: Span) -> HirTy {
+    fn lower_ty(&mut self, ast_ty_kind: TyKind, span: Span) -> HirTy {
         let hir_ty_kind = match ast_ty_kind {
-            TyKind::I32 => HirTyKind::I32,
+            TyKind::Int(kind) => HirTyKind::Int(kind),
+            TyKind::Bool => HirTyKind::Bool,
             TyKind::Str => HirTyKind::Str,
+            TyKind::Adt(name) => match self.defs.get_by_names(&name.kind) {
+                Some((def_id, data)) if data.kind == DefKind::Struct => HirTyKind::Adt(def_id),
+                _ => {
+                    self.emit_error(
+                        HirLowerErrorKind::UndefinedName {
+                            name: name.kind.clone(),
+                        },
+                        name.span.clone(),
+                    );
+                    HirTyKind::Err
+                }
+            },
             TyKind::Ref { mutable, inner } => {
                 let inner_ty = self.lower_ty(inner.kind, span.clone());
                 HirTyKind::Ref {
@@ -420,37 +485,18 @@ impl HirLowerer<'_> {
 
     fn lower_stmt(&mut self, stmt: &Stmt) -> HirStmt {
         let kind = match &stmt.kind {
-            StmtKind::Let {
-                mutable,
-                name,
-                ty,
-                init,
-            } => {
-                let hir_name = name.kind.clone();
-
+            StmtKind::Let { pat, ty, init } => {
                 let hir_ty = ty
                     .as_ref()
                     .map(|ty| self.lower_ty(ty.kind.clone(), ty.span.clone()));
                 let hir_expr = init.as_ref().map(|expr| self.lower_expr(expr));
                 let init = hir_expr.map_or(None, |hir_expr| Some(self.hir.alloc_expr(hir_expr)));
 
-                match self.decalre_local(
-                    name.kind.clone(),
-                    *mutable,
-                    LocalKind::Let,
-                    name.span.clone(),
-                ) {
-                    Ok(local_id) => HirStmtKind::Let {
-                        local_id,
-                        name: hir_name,
-                        mutable: *mutable,
-                        ty: hir_ty,
-                        init,
-                    },
-                    Err(err) => {
-                        self.emit_error(err, name.span.clone());
-                        HirStmtKind::Empty
-                    }
+                let hir_pat = self.lower_pat(pat);
+                HirStmtKind::Let {
+                    pat: hir_pat,
+                    ty: hir_ty,
+                    init,
                 }
             }
 
@@ -601,9 +647,40 @@ impl HirLowerer<'_> {
         let kind = match &expr.kind {
             ExprKind::Int(value) => HirExprKind::Int(*value),
 
+            ExprKind::Bool(value) => HirExprKind::Bool(*value),
+
             ExprKind::String(value) => HirExprKind::String(value.clone()),
 
             ExprKind::Place(place) => return self.lower_place_as_expr(place),
+
+            ExprKind::StructLit { name, fields } => {
+                let def_id = match self.defs.get_by_names(&name.kind) {
+                    Some((def_id, data)) if data.kind == DefKind::Struct => def_id,
+                    _ => {
+                        self.emit_error(
+                            HirLowerErrorKind::UndefinedName {
+                                name: name.kind.clone(),
+                            },
+                            name.span.clone(),
+                        );
+                        return HirExpr::err(expr.span.clone());
+                    }
+                };
+                let fields = fields
+                    .iter()
+                    .map(|field| {
+                        let hir_expr = self.lower_expr(&field.expr);
+                        let expr = self.hir.alloc_expr(hir_expr);
+                        HirStructLitField {
+                            name: field.name.kind.clone(),
+                            expr,
+                            span: field.name.span.clone(),
+                        }
+                    })
+                    .collect();
+
+                HirExprKind::StructLit { def_id, fields }
+            }
 
             ExprKind::Binary { op, lhs, rhs } => {
                 let lhs = self.lower_expr(lhs);
@@ -718,6 +795,87 @@ impl HirLowerer<'_> {
         }
     }
 
+    fn lower_pat(&mut self, pat: &crate::ast::ty::Pat) -> HirPat {
+        let kind = match &pat.kind {
+            crate::ast::ty::PatKind::Wildcard => HirPatKind::Wildcard,
+            crate::ast::ty::PatKind::Binding { mutable, name } => {
+                match self.decalre_local(
+                    name.kind.clone(),
+                    *mutable,
+                    LocalKind::Let,
+                    name.span.clone(),
+                ) {
+                    Ok(local_id) => HirPatKind::Binding {
+                        local_id,
+                        name: name.kind.clone(),
+                        mutable: *mutable,
+                    },
+                    Err(err) => {
+                        self.emit_error(err, name.span.clone());
+                        HirPatKind::Wildcard
+                    }
+                }
+            }
+            crate::ast::ty::PatKind::Tuple(elems) => {
+                HirPatKind::Tuple(elems.iter().map(|elem| self.lower_pat(elem)).collect())
+            }
+            crate::ast::ty::PatKind::Struct { name, fields } => {
+                let def_id = match self.defs.get_by_names(&name.kind) {
+                    Some((def_id, data)) if data.kind == DefKind::Struct => def_id,
+                    _ => {
+                        self.emit_error(
+                            HirLowerErrorKind::UndefinedName {
+                                name: name.kind.clone(),
+                            },
+                            name.span.clone(),
+                        );
+                        return HirPat {
+                            span: pat.span.clone(),
+                            kind: HirPatKind::Wildcard,
+                        };
+                    }
+                };
+                let lowered_fields = fields
+                    .iter()
+                    .filter_map(|field| {
+                        let index = match self.defs.get(def_id).and_then(|data| {
+                            data.struct_fields
+                                .iter()
+                                .position(|decl_field| decl_field.name == field.name.kind)
+                        }) {
+                            Some(index) => index,
+                            None => {
+                                self.emit_error(
+                                    HirLowerErrorKind::UndefinedName {
+                                        name: field.name.kind.clone(),
+                                    },
+                                    field.name.span.clone(),
+                                );
+                                return None;
+                            }
+                        };
+                        Some(HirStructPatField {
+                            name: field.name.kind.clone(),
+                            index,
+                            pat: self.lower_pat(&field.pat),
+                            span: field.name.span.clone(),
+                        })
+                    })
+                    .collect();
+
+                HirPatKind::Struct {
+                    def_id,
+                    fields: lowered_fields,
+                }
+            }
+        };
+
+        HirPat {
+            span: pat.span.clone(),
+            kind,
+        }
+    }
+
     fn lower_place_as_expr(&mut self, place: &Place) -> HirExpr {
         let kind = match &place.kind {
             PlaceKind::Local(name) => {
@@ -747,6 +905,16 @@ impl HirLowerer<'_> {
                 HirExprKind::Field {
                     base,
                     index: *index,
+                }
+            }
+
+            PlaceKind::NamedField { base, name } => {
+                let base = self.lower_place_as_expr(base);
+                let base = self.hir.alloc_expr(base);
+
+                HirExprKind::NamedField {
+                    base,
+                    name: name.kind.clone(),
                 }
             }
         };

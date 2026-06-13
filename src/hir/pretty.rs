@@ -2,7 +2,7 @@ use std::fmt::{Display, Write};
 
 use crate::hir::{
     id::{DefId, HirBodyId, HirExprId, HirItemId, HirStmtId, LocalId},
-    node::{HirBlock, HirExprKind, HirItemKind, HirProgram, HirStmtKind},
+    node::{HirBlock, HirExprKind, HirItemKind, HirPat, HirPatKind, HirProgram, HirStmtKind},
     res::Res,
     table::{DefTable, LocalTable},
     ty::{HirTy, HirTyKind},
@@ -226,6 +226,28 @@ impl<'a> HirDumper<'a> {
                     format!("Return {}", self.ty_text(&hir_fn.sig.ret_ty)),
                 );
             }
+            HirItemKind::Struct(hir_struct) => {
+                self.line(
+                    indent,
+                    format!(
+                        "StructItem {:?} {}",
+                        item.def_id,
+                        self.def_text(item.def_id)
+                    ),
+                );
+                self.line(indent + 1, format!("Name {}", hir_struct.name));
+                self.line(indent + 1, "Fields");
+                if hir_struct.fields.is_empty() {
+                    self.line(indent + 2, "<empty>");
+                } else {
+                    for field in &hir_struct.fields {
+                        self.line(
+                            indent + 2,
+                            format!("{}: {}", field.name, self.ty_text(&field.ty)),
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -272,28 +294,14 @@ impl<'a> HirDumper<'a> {
 
     fn stmt_kind(&mut self, kind: &HirStmtKind, indent: usize) {
         match kind {
-            HirStmtKind::Let {
-                local_id,
-                name,
-                mutable,
-                ty,
-                init,
-            } => {
-                let mut text = String::from("Let ");
-                if *mutable {
-                    text.push_str("mut ");
-                }
-                let _ = write!(
-                    text,
-                    "{} {:?} {}",
-                    name,
-                    local_id,
-                    self.local_text(*local_id)
-                );
+            HirStmtKind::Let { pat, ty, init } => {
+                let mut text = String::from("Let");
                 if let Some(ty) = ty {
                     let _ = write!(text, ": {}", self.ty_text(ty));
                 }
                 self.line(indent, text);
+                self.line(indent + 1, "Pat");
+                self.pat(pat, indent + 2);
 
                 if let Some(init) = init {
                     self.line(indent + 1, "Init");
@@ -321,13 +329,58 @@ impl<'a> HirDumper<'a> {
         self.expr_kind(&expr.kind, indent);
     }
 
+    fn pat(&mut self, pat: &HirPat, indent: usize) {
+        match &pat.kind {
+            HirPatKind::Wildcard => self.line(indent, "Wildcard"),
+            HirPatKind::Binding {
+                local_id,
+                name,
+                mutable,
+            } => {
+                let mut text = String::from("Binding ");
+                if *mutable {
+                    text.push_str("mut ");
+                }
+                let _ = write!(
+                    text,
+                    "{} {:?} {}",
+                    name,
+                    local_id,
+                    self.local_text(*local_id)
+                );
+                self.line(indent, text);
+            }
+            HirPatKind::Tuple(elems) => {
+                self.line(indent, "TuplePat");
+                for elem in elems {
+                    self.pat(elem, indent + 1);
+                }
+            }
+            HirPatKind::Struct { def_id, fields } => {
+                self.line(indent, format!("StructPat {}", self.def_text(*def_id)));
+                for field in fields {
+                    self.line(indent + 1, format!("Field {} #{}", field.name, field.index));
+                    self.pat(&field.pat, indent + 2);
+                }
+            }
+        }
+    }
+
     fn expr_kind(&mut self, kind: &HirExprKind, indent: usize) {
         match kind {
             HirExprKind::Int(value) => self.line(indent, format!("Int {value}")),
+            HirExprKind::Bool(value) => self.line(indent, format!("Bool {value}")),
             HirExprKind::String(value) => {
                 self.line(indent, format!("String \"{}\"", escape_string(value)))
             }
             HirExprKind::Path(res) => self.line(indent, format!("Path {}", self.res_text(*res))),
+            HirExprKind::StructLit { def_id, fields } => {
+                self.line(indent, format!("StructLit {}", self.def_text(*def_id)));
+                for field in fields {
+                    self.line(indent + 1, format!("Field {}", field.name));
+                    self.expr(field.expr, indent + 2);
+                }
+            }
             HirExprKind::Binary { op, lhs, rhs } => {
                 self.line(indent, format!("Binary {}", self.binary_op(op)));
                 self.expr(*lhs, indent + 1);
@@ -440,6 +493,10 @@ impl<'a> HirDumper<'a> {
                 self.line(indent, format!("Field .{index}"));
                 self.expr(*base, indent + 1);
             }
+            HirExprKind::NamedField { base, name } => {
+                self.line(indent, format!("NamedField .{name}"));
+                self.expr(*base, indent + 1);
+            }
             HirExprKind::Array(elems) => {
                 self.line(indent, "Array");
                 for elem in elems {
@@ -494,8 +551,10 @@ impl<'a> HirDumper<'a> {
 
     fn ty_text(&self, ty: &HirTy) -> String {
         match &ty.kind {
-            HirTyKind::I32 => "i32".to_string(),
+            HirTyKind::Int(kind) => kind.name().to_string(),
+            HirTyKind::Bool => "bool".to_string(),
             HirTyKind::Str => "str".to_string(),
+            HirTyKind::Adt(def_id) => self.def_text(*def_id),
             HirTyKind::Unit => "()".to_string(),
             HirTyKind::Ref { mutable, inner } => {
                 if *mutable {
