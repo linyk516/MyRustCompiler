@@ -6,3 +6,7 @@
 /gen/
 /gui/dist/
 /gui/node_modules/
+/.idea/
+/.vscode/
+/.zed/
+/docs/superpowers/
